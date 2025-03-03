@@ -146,7 +146,7 @@ def deliver_packages(packages, mapping, access_token):
 
 def main():
     # Dossier source (où se trouvent les dossiers à copier)
-    source_dir = r"D:\handleFile\Depot"  # Remplacez par votre chemin source
+    source_dir = r"D:\handleFile"  # Remplacez par votre chemin source
 
     # Fichier de configuration JSON contenant le mapping des cibles
     config_file = r"D:\handleFile\config.json"  # Remplacez par votre chemin de configuration
