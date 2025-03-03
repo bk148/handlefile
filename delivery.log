@@ -1,0 +1,11 @@
+2025-03-02 09:21:36,046 - Aucune cible trouvée pour le package : D:\handleFile\Depot\Destination
+2025-03-02 09:21:36,046 - Aucune cible trouvée pour le package : D:\handleFile\Depot\Destination\C1
+2025-03-02 09:21:36,046 - Aucune cible trouvée pour le package : D:\handleFile\Depot\Destination\C2
+2025-03-02 09:21:36,046 - Aucune cible trouvée pour le package : D:\handleFile\Depot\Destination\C3
+2025-03-02 09:21:36,051 - Livraison réussie: D:\handleFile\Depot\D3 -> D:\handleFile\Depot\Destination\C3\D3
+2025-03-02 09:21:36,057 - Livraison réussie: D:\handleFile\Depot\D1 -> D:\handleFile\Depot\Destination\C1\D1
+2025-03-02 09:21:36,060 - Livraison réussie: D:\handleFile\Depot\D2 -> D:\handleFile\Depot\Destination\C2\D2
+2025-03-02 09:23:56,793 - Aucune cible trouvée pour le package : D:\handleFile\Depot\Destination
+2025-03-02 09:23:56,798 - Livraison réussie: D:\handleFile\Depot\D3 -> D:\handleFile\Depot\Destination\C3\D3
+2025-03-02 09:23:56,803 - Livraison réussie: D:\handleFile\Depot\D1 -> D:\handleFile\Depot\Destination\C1\D1
+2025-03-02 09:23:56,807 - Livraison réussie: D:\handleFile\Depot\D2 -> D:\handleFile\Depot\Destination\C2\D2
