@@ -26,7 +26,8 @@ class ControllerGraphTransfer:
         # Calcul du volume total et du nombre de fichiers
         total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
         total_volume = sum(
-            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file in files]
+            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file
+             in files]
         )
 
         # Affichage des informations initiales
@@ -35,21 +36,17 @@ class ControllerGraphTransfer:
 
         # Initialisation de la barre de progression
         with Progress(
-            TextColumn("[bold blue]{task.description}[/bold blue]"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            transient=True
+                TextColumn("[bold blue]{task.description}[/bold blue]"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                transient=True
         ) as progress:
             task = progress.add_task("[cyan]Transfert en cours...", total=total_files)
 
-            # Fonction de rappel pour mettre à jour la progression
-            def update_progress():
-                progress.update(task, advance=1)
-
-            # Appel de la méthode de transfert avec la fonction de rappel
+            # Appel de la méthode de transfert avec la barre de progression
             size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(
-                group_id, channel_id, site_id, depot_data_directory_path, update_progress
+                group_id, channel_id, site_id, depot_data_directory_path, progress, task
             )
 
         # Calcul de la durée totale

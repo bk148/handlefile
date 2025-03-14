@@ -117,7 +117,8 @@ class ModelGraphTransfer:
                 f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path, update_progress):
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path, progress=None,
+                                        task=None):
         # Obtenir le dossier de fichiers du canal
         files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
@@ -169,7 +170,8 @@ class ModelGraphTransfer:
                         logging.info(f"File {file_name} already exists, skipping.")
                     elif status is not None:
                         total_copied += 1
-                    # Mettre à jour la progression
-                    update_progress()
+                    # Mettre à jour la progression si une barre de progression est fournie
+                    if progress and task:
+                        progress.update(task, advance=1)
 
             return os.path.getsize(depot_data_directory_path), len(files), len(dirs), total_copied
