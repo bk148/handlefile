@@ -1,9 +1,13 @@
+import concurrent
 import os
 import requests
 import logging
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 from rich.progress import Progress, TextColumn, BarColumn
+
+# Définir un seuil pour les fichiers volumineux (par exemple, 10 Mo)
+LARGE_FILE_THRESHOLD = 10 * 1024 * 1024  # 10 Mo
 
 
 class ModelGraphTransfer:
@@ -56,7 +60,7 @@ class ModelGraphTransfer:
         data = {
             'name': folder_name,
             'folder': {},
-            '@microsoft.graph.conflictBehavior': 'replace'  # Remplace le dossier s'il existe
+            '@microsoft.graph.conflictBehavior': 'fail'
         }
         try:
             response = requests.post(url, headers=self.headers, json=data, proxies=self.proxies)
@@ -68,20 +72,18 @@ class ModelGraphTransfer:
                 f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Folder Name: {folder_name}")
             return None
 
-    def upload_file_to_channel(self, site_id, parent_item_id, file_path):
+    def upload_file(self, site_id, parent_item_id, file_path):
+        """
+        Upload un fichier de taille normale.
+        """
         file_name = os.path.basename(file_path)
         if self.item_exists(site_id, parent_item_id, file_name):
             return file_name, "exists"
 
-        file_size = os.path.getsize(file_path)
-        if file_size > 4 * 1024 * 1024:  # Si le fichier est supérieur à 4 Mo
-            return self.upload_large_file(site_id, parent_item_id, file_path, file_name)
-
-        # Encodage du nom de fichier pour l'URL
-        encoded_file_name = quote(file_name)
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/content"
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{file_name}:/content"
         try:
             with open(file_path, 'rb') as file:
+                logging.info(f"Uploading file: {file_name} (Size: {os.path.getsize(file_path) / 1024 / 1024:.2f} MB)")
                 response = requests.put(url, headers=self.headers, data=file, proxies=self.proxies)
                 response.raise_for_status()
                 return file_name, response.status_code
@@ -91,27 +93,24 @@ class ModelGraphTransfer:
                 f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
-    def upload_large_file(self, site_id, parent_item_id, file_path, file_name):
-        # Encodage du nom de fichier pour l'URL
-        encoded_file_name = quote(file_name)
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/createUploadSession"
-        try:
-            response = requests.post(url, headers=self.headers, proxies=self.proxies)
-            response.raise_for_status()
-            upload_url = response.json()['uploadUrl']
+    def upload_large_file(self, site_id, parent_item_id, file_path):
+        """
+        Upload un fichier volumineux en utilisant une méthode optimisée.
+        """
+        file_name = os.path.basename(file_path)
+        if self.item_exists(site_id, parent_item_id, file_name):
+            return file_name, "exists"
 
-            file_size = os.path.getsize(file_path)
-            chunk_size = 320 * 1024 * 1024  # 320 KB par fragment
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{file_name}:/content"
+        try:
             with open(file_path, 'rb') as file:
-                for i in range(0, file_size, chunk_size):
-                    chunk_data = file.read(chunk_size)
-                    headers = {
-                        'Content-Length': str(len(chunk_data)),
-                        'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
-                    }
-                    response = requests.put(upload_url, headers=headers, data=chunk_data)
-                    response.raise_for_status()
-            return file_name, response.status_code
+                logging.info(
+                    f"Uploading large file: {file_name} (Size: {os.path.getsize(file_path) / 1024 / 1024:.2f} MB)")
+                # Ici, vous pouvez implémenter une logique spécifique pour les gros fichiers,
+                # comme le découpage en morceaux (chunking) ou l'utilisation de sessions d'upload.
+                response = requests.put(url, headers=self.headers, data=file, proxies=self.proxies)
+                response.raise_for_status()
+                return file_name, response.status_code
         except requests.exceptions.RequestException as e:
             logging.error(f"Error uploading large file: {e}")
             self.error_logs["File Error"].append(
@@ -132,8 +131,9 @@ class ModelGraphTransfer:
 
         if drive_id and parent_item_id:
             folder_name = os.path.basename(depot_data_directory_path)
+            encoded_folder_name = quote(folder_name)
             if not self.item_exists(site_id, parent_item_id, folder_name):
-                folder_response = self.create_folder(site_id, parent_item_id, folder_name)
+                folder_response = self.create_folder(site_id, parent_item_id, encoded_folder_name)
                 parent_item_id = folder_response['id']
             else:
                 parent_item_id = next(item['id'] for item in requests.get(
@@ -148,8 +148,11 @@ class ModelGraphTransfer:
                  file in files])
 
             def process_file(file_path, site_id, current_parent_item_id):
-                # Appel unique à upload_file_to_channel, qui gère la logique de taille de fichier
-                return self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
+                file_size = os.path.getsize(file_path)
+                if file_size > LARGE_FILE_THRESHOLD:
+                    return self.upload_large_file(site_id, current_parent_item_id, file_path)
+                else:
+                    return self.upload_file(site_id, current_parent_item_id, file_path)
 
             with Progress(
                     TextColumn("[progress.description]{task.description}"),
