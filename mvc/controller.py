@@ -47,7 +47,7 @@ class ControllerGraphTransfer:
                 file_size=""
             )
 
-            # Fonction pour traiter chaque fichier
+            # Fonction pour intercepter les messages de téléchargement
             def process_file(file_path, site_id, current_parent_item_id):
                 file_name = os.path.basename(file_path)
                 file_size = os.path.getsize(file_path)
@@ -61,13 +61,13 @@ class ControllerGraphTransfer:
                     file_size=file_size_mb
                 )
 
-                # Appeler la méthode de téléchargement appropriée
+                # Appeler la méthode de téléchargement de ModelGraphTransfer
                 result = self.graph_api.upload_file_to_channel(site_id, current_parent_item_id, file_path)
                 return result
 
-            # Parcourir les fichiers et dossiers
+            # Appeler la méthode de ModelGraphTransfer avec les paramètres appropriés
             size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(
-                group_id, channel_id, site_id, depot_data_directory_path, process_file
+                group_id, channel_id, site_id, depot_data_directory_path
             )
 
         # Calculer et afficher la durée
