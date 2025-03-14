@@ -91,6 +91,33 @@ class ModelGraphTransfer:
                 f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
+    def upload_large_file(self, site_id, parent_item_id, file_path, file_name):
+        # Encodage du nom de fichier pour l'URL
+        encoded_file_name = quote(file_name)
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/createUploadSession"
+        try:
+            response = requests.post(url, headers=self.headers, proxies=self.proxies)
+            response.raise_for_status()
+            upload_url = response.json()['uploadUrl']
+
+            file_size = os.path.getsize(file_path)
+            chunk_size = 320 * 1024 * 1024  # 320 KB par fragment
+            with open(file_path, 'rb') as file:
+                for i in range(0, file_size, chunk_size):
+                    chunk_data = file.read(chunk_size)
+                    headers = {
+                        'Content-Length': str(len(chunk_data)),
+                        'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
+                    }
+                    response = requests.put(upload_url, headers=headers, data=chunk_data)
+                    response.raise_for_status()
+            return file_name, response.status_code
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error uploading large file: {e}")
+            self.error_logs["File Error"].append(
+                f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+            return file_name, None
+
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
         files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
