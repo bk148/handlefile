@@ -21,8 +21,11 @@ class ControllerGraphTransfer:
     def execute_migration(self, team_id, channel_id, site_id, source_path):
         """Exécuter la migration complète pour une équipe"""
         try:
-            # Récupérer le dossier cible
-            folder_data = self.model.get_target_folder(team_id, channel_id)
+            # Récupérer le dossier de fichiers du canal
+            folder_data = self.model.get_channel_files_folder(team_id, channel_id)
+            if not folder_data:
+                raise Exception(f"Impossible de récupérer le dossier de fichiers pour l'équipe {team_id}")
+
             root_folder_id = folder_data['id']
 
             # Créer la structure de dossiers
@@ -89,9 +92,9 @@ class ControllerGraphTransfer:
     def _process_file(self, site_id, folder_id, file_path):
         """Traiter un fichier individuel"""
         try:
-            success = self.model.upload_file(site_id, folder_id, file_path, lambda x: None)
+            success = self.model.upload_file_to_channel(site_id, folder_id, file_path)
             return {
-                'success': success,
+                'success': success[1] != "exists",  # Ignorer les fichiers existants
                 'size': file_path.stat().st_size,
                 'error': None
             }

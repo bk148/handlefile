@@ -16,20 +16,20 @@ class ModelGraphTransfer:
     def __init__(self, token_generator, proxy):
         self.token_generator = token_generator
         self.proxy = proxy
-        self.proxies = {'http': proxy, 'https': proxy}  # Configuration du proxy
+        self.proxies = {'http': self.proxy, 'https': self.proxy}  # Définition du proxy
         self._refresh_token()
-        self.error_logs = {}
-        self._init_error_logs()
+        self.error_logs = {
+            "Connection Error": [],
+            "Authentication Error": [],
+            "Data Format Error": [],
+            "Access Rights Error": [],
+            "Network Error": [],
+            "Quota Error": [],
+            "File Error": [],
+            "Cyclic Redundancy Error": [],
+            "Ignored Files": []
+        }
         self._setup_logging()
-        self.api_call_count = 0
-
-    def _init_error_logs(self):
-        """Initialiser les catégories d'erreurs"""
-        categories = [
-            "Connection", "Authentication", "Data Format",
-            "Permissions", "Rate Limit", "File", "Network"
-        ]
-        self.error_logs = {f"{cat} Errors": [] for cat in categories}
 
     def _setup_logging(self):
         """Configurer le système de journalisation"""
@@ -59,33 +59,19 @@ class ModelGraphTransfer:
         retry=retry_if_exception_type(requests.RequestException),
         before_sleep=lambda retry_state: before_sleep_log(self.logger, logging.WARNING)
     )
-    def _api_request(self, method, url, **kwargs):
+    def _make_request(self, method, url, **kwargs):
         """Exécuter une requête API avec gestion des erreurs"""
         self._check_token()
-        self.api_call_count += 1
-
-        # Gestion du rate limiting
-        if self.api_call_count % 10 == 0:
-            time.sleep(0.5)
-
         try:
-            # Inclure systématiquement le proxy dans les requêtes
+            # Inclure systématiquement le proxy
             kwargs['proxies'] = self.proxies
             response = requests.request(
                 method, url,
                 headers=self.headers,
                 **kwargs
             )
-
-            if response.status_code == 429:
-                retry_after = int(response.headers.get('Retry-After', 10))
-                self.logger.warning(f"Rate limit - Pause de {retry_after}s")
-                time.sleep(retry_after)
-                return self._api_request(method, url, **kwargs)
-
             response.raise_for_status()
             return response
-
         except requests.RequestException as e:
             self.logger.error(f"Erreur API: {str(e)}")
             self.logger.error(f"URL: {url}")
@@ -93,119 +79,121 @@ class ModelGraphTransfer:
             self.logger.error(f"Proxy utilisé: {self.proxy}")
             raise
 
-    def get_target_folder(self, team_id, channel_id):
+    def get_channel_files_folder(self, group_id, channel_id):
         """
-        Récupérer le dossier cible pour un canal spécifique
+        Récupérer le dossier de fichiers associé à un canal Teams.
 
         Args:
-            team_id (str): ID de l'équipe
-            channel_id (str): ID du canal
+            group_id (str): ID de l'équipe (groupe) Teams.
+            channel_id (str): ID du canal Teams.
 
         Returns:
-            dict: Informations sur le dossier cible
+            dict: Informations sur le dossier de fichiers, ou None en cas d'erreur.
         """
-        url = f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/filesFolder"
+        url = f"https://graph.microsoft.com/v1.0/teams/{group_id}/channels/{channel_id}/filesFolder"
         try:
-            response = self._api_request('GET', url)
+            response = self._make_request('GET', url)
             return {
                 'id': response.json().get('id'),
                 'name': response.json().get('name'),
                 'webUrl': response.json().get('webUrl')
             }
         except requests.RequestException as e:
-            self.logger.error(f"Erreur récupération dossier cible: {str(e)}")
-            self.error_logs["Connection Errors"].append(f"{team_id}/{channel_id}")
+            self.logger.error(f"Erreur récupération dossier de fichiers: {str(e)}")
+            self.error_logs["Connection Errors"].append(f"{group_id}/{channel_id}")
             return None
 
     @lru_cache(maxsize=1024)
-    def item_exists(self, site_id, parent_id, item_name):
+    def item_exists(self, site_id, parent_item_id, item_name):
         """Vérifier si un élément existe"""
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_id}/children"
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
         try:
-            response = self._api_request('GET', url)
-            return any(item['name'] == item_name for item in response.json().get('value', []))
+            response = self._make_request('GET', url)
+            items = response.json().get('value', [])
+            return any(item['name'] == item_name for item in items)
         except requests.RequestException:
             return False
 
-    def create_folder(self, site_id, parent_id, folder_name):
+    def create_folder(self, site_id, parent_item_id, folder_name):
         """Créer un dossier dans SharePoint"""
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_id}/children"
-        payload = {
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
+        data = {
             'name': folder_name,
             'folder': {},
-            '@microsoft.graph.conflictBehavior': 'rename'
+            '@microsoft.graph.conflictBehavior': 'fail'
         }
         try:
-            response = self._api_request('POST', url, json=payload)
-            return response.json()['id']
+            response = self._make_request('POST', url, json=data)
+            return response.json()
         except requests.RequestException as e:
-            self.error_logs["File Errors"].append(f"{folder_name}: {str(e)}")
+            self.logger.error(f"Erreur création dossier: {str(e)}")
+            self.error_logs["Connection Errors"].append(
+                f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Folder Name: {folder_name}")
             return None
 
-    def upload_file(self, site_id, parent_id, file_path, progress_callback=None):
-        """Uploader un fichier"""
+    def upload_file_to_channel(self, site_id, parent_item_id, file_path):
+        """Uploader un fichier dans un canal Teams"""
         file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
+        if self.item_exists(site_id, parent_item_id, file_name):
+            return file_name, "exists"
 
-        # Vérifier si le fichier existe déjà
-        if self.item_exists(site_id, parent_id, file_name):
-            self.logger.warning(f"Fichier existant ignoré: {file_name}")
-            return False
-
+        encoded_file_name = quote(file_name, safe='')
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/content"
         try:
-            if file_size > 10 * 1024 * 1024:  # 10MB
-                return self._upload_large_file(site_id, parent_id, file_path, progress_callback)
-            else:
-                return self._upload_small_file(site_id, parent_id, file_path, progress_callback)
-        except Exception as e:
-            self.error_logs["File Errors"].append(f"{file_name}: {str(e)}")
-            return False
+            with open(file_path, 'rb') as file:
+                response = self._make_request('PUT', url, data=file)
+                return file_name, response.status_code
+        except requests.RequestException as e:
+            self.logger.error(f"Erreur upload fichier: {str(e)}")
+            self.error_logs["File Errors"].append(
+                f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+            return file_name, None
 
-    def _upload_small_file(self, site_id, parent_id, file_path, callback):
-        """Uploader un petit fichier en une seule requête"""
-        file_name = quote(os.path.basename(file_path))
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_id}:/{file_name}:/content"
-
-        with open(file_path, 'rb') as f:
-            response = self._api_request('PUT', url, data=f)
-
-        if callback:
-            callback(os.path.getsize(file_path))
-
-        return response.status_code == 201
-
-    def _upload_large_file(self, site_id, parent_id, file_path, callback):
+    def upload_large_files(self, site_id, parent_item_id, file_path):
         """Uploader un gros fichier avec upload session"""
-        file_name = quote(os.path.basename(file_path))
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_id}:/{file_name}:/createUploadSession"
+        file_name = os.path.basename(file_path)
+        encoded_file_name = quote(file_name, safe='')
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/createUploadSession"
+        try:
+            # Créer la session d'upload
+            response = self._make_request('POST', url)
+            upload_url = response.json().get('uploadUrl')
 
-        # Créer la session d'upload
-        response = self._api_request('POST', url)
-        upload_url = response.json()['uploadUrl']
+            # Uploader le fichier en chunks
+            chunk_size = self._calculate_chunk_size(os.path.getsize(file_path))
+            with open(file_path, 'rb') as file:
+                file_size = os.path.getsize(file_path)
+                for i in range(0, file_size, chunk_size):
+                    chunk_data = file.read(chunk_size)
+                    chunk_headers = {
+                        'Content-Length': str(len(chunk_data)),
+                        'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
+                    }
+                    # Utiliser le proxy pour l'upload des chunks
+                    chunk_response = requests.put(
+                        upload_url,
+                        headers=chunk_headers,
+                        data=chunk_data,
+                        proxies=self.proxies  # Proxy inclus ici
+                    )
+                    chunk_response.raise_for_status()
 
-        file_size = os.path.getsize(file_path)
-        chunk_size = self._calculate_chunk_size(file_size)
-        uploaded = 0
-
-        with open(file_path, 'rb') as f:
-            while uploaded < file_size:
-                chunk = f.read(chunk_size)
-                chunk_start = uploaded
-                chunk_end = uploaded + len(chunk) - 1
-
-                headers = {
-                    'Content-Length': str(len(chunk)),
-                    'Content-Range': f'bytes {chunk_start}-{chunk_end}/{file_size}'
-                }
-
-                self._api_request('PUT', upload_url, headers=headers, data=chunk)
-                uploaded += len(chunk)
-
-                if callback:
-                    callback(len(chunk))
-
-        return True
+            return file_name, "uploaded"
+        except requests.RequestException as e:
+            self.logger.error(f"Erreur upload gros fichier: {str(e)}")
+            self.error_logs["File Errors"].append(
+                f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+            return file_name, None
 
     def _calculate_chunk_size(self, file_size):
-        """Calculer dynamiquement la taille des chunks"""
+        """
+        Calculer dynamiquement la taille des chunks pour l'upload de gros fichiers.
+
+        Args:
+            file_size (int): Taille du fichier en octets.
+
+        Returns:
+            int: Taille du chunk en octets.
+        """
+        # Taille minimale : 5 Mo, taille maximale : 60 Mo
         return min(max(file_size // 100, 5 * 1024 * 1024), 60 * 1024 * 1024)
