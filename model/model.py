@@ -57,7 +57,7 @@ class ModelGraphTransfer:
         wait=wait_exponential(multiplier=1, min=2, max=30),
         stop=stop_after_attempt(5),
         retry=retry_if_exception_type(requests.RequestException),
-        before_sleep=before_sleep_log(self.logger, logging.WARNING)
+        before_sleep=lambda retry_state: before_sleep_log(self.logger, logging.WARNING)
     )
     def _api_request(self, method, url, **kwargs):
         """Exécuter une requête API avec gestion des erreurs"""
