@@ -16,7 +16,7 @@ class ModelGraphTransfer:
     def __init__(self, token_generator, proxy):
         self.token_generator = token_generator
         self.proxy = proxy
-        self.proxies = {'http': proxy, 'https': proxy}
+        self.proxies = {'http': proxy, 'https': proxy}  # Configuration du proxy
         self._refresh_token()
         self.error_logs = {}
         self._init_error_logs()
@@ -69,10 +69,11 @@ class ModelGraphTransfer:
             time.sleep(0.5)
 
         try:
+            # Inclure systématiquement le proxy dans les requêtes
+            kwargs['proxies'] = self.proxies
             response = requests.request(
                 method, url,
                 headers=self.headers,
-                proxies=self.proxies,
                 **kwargs
             )
 
@@ -87,6 +88,9 @@ class ModelGraphTransfer:
 
         except requests.RequestException as e:
             self.logger.error(f"Erreur API: {str(e)}")
+            self.logger.error(f"URL: {url}")
+            self.logger.error(f"Method: {method}")
+            self.logger.error(f"Proxy utilisé: {self.proxy}")
             raise
 
     def get_target_folder(self, team_id, channel_id):
