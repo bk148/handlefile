@@ -89,6 +89,30 @@ class ModelGraphTransfer:
             self.logger.error(f"Erreur API: {str(e)}")
             raise
 
+    def get_target_folder(self, team_id, channel_id):
+        """
+        Récupérer le dossier cible pour un canal spécifique
+
+        Args:
+            team_id (str): ID de l'équipe
+            channel_id (str): ID du canal
+
+        Returns:
+            dict: Informations sur le dossier cible
+        """
+        url = f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/filesFolder"
+        try:
+            response = self._api_request('GET', url)
+            return {
+                'id': response.json().get('id'),
+                'name': response.json().get('name'),
+                'webUrl': response.json().get('webUrl')
+            }
+        except requests.RequestException as e:
+            self.logger.error(f"Erreur récupération dossier cible: {str(e)}")
+            self.error_logs["Connection Errors"].append(f"{team_id}/{channel_id}")
+            return None
+
     @lru_cache(maxsize=1024)
     def item_exists(self, site_id, parent_id, item_name):
         """Vérifier si un élément existe"""
