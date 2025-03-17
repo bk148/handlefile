@@ -10,20 +10,25 @@ ERROR_CATEGORIES = [
     "File Error", "Cyclic Redundancy Error", "Ignored Files"
 ]
 
-def setup_logging():
+def setup_logging(enable_console_logs=False):
     # Créer le dossier de logs s'il n'existe pas
     if not os.path.exists(LOG_DIR):
         os.makedirs(LOG_DIR)
 
     # Configuration du logging principal (transfer.log)
     log_file = os.path.join(LOG_DIR, "transfer.log")
+    handlers = [
+        RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=2)  # 5 Mo par fichier, 2 backups
+    ]
+
+    # Ajouter un handler console si activé
+    if enable_console_logs:
+        handlers.append(logging.StreamHandler())
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=2),  # 5 Mo par fichier, 2 backups
-            logging.StreamHandler()  # Afficher les logs dans la console
-        ]
+        handlers=handlers
     )
 
     # Configuration des logs par catégorie
