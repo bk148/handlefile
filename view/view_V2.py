@@ -13,7 +13,7 @@ class TransferView:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn()
         )
-        self.live = Live(self.progress, refresh_per_second=10)  # Rafraîchissement toutes les 100 ms
+        self.live = None  # Initialisé à None
 
     def display_header(self):
         """Affiche un en-tête pour le transfert."""
@@ -37,6 +37,9 @@ class TransferView:
 
     def start_progress(self, total_files):
         """Initialise la barre de progression."""
+        if self.live is not None:
+            self.live.stop()  # Arrête l'instance précédente de Live
+        self.live = Live(self.progress, refresh_per_second=10)  # Crée une nouvelle instance de Live
         self.task = self.progress.add_task("[cyan]Transfert en cours...", total=total_files)
         self.live.start()
 
@@ -46,5 +49,7 @@ class TransferView:
 
     def end_progress(self):
         """Termine la barre de progression."""
-        self.live.stop()
+        if self.live is not None:
+            self.live.stop()
+            self.live = None  # Réinitialise l'instance de Live
         self.console.print("[bold green]Transfert terminé ![/bold green]")
