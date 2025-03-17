@@ -4,13 +4,33 @@ import logging
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Configuration du logging
+# Créer le répertoire de logs s'il n'existe pas
+if not os.path.exists("transferLogs"):
+    os.makedirs("transferLogs")
+
+# Configuration du logging général
 logging.basicConfig(
-    filename='transfer.log',
+    filename='transferLogs/transfer.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+# Configuration des loggers pour chaque type d'erreur
+error_loggers = {}
+error_types = [
+    "Connection Error", "Authentication Error", "Data Format Error",
+    "Access Rights Error", "Network Error", "Quota Error",
+    "File Error", "Cyclic Redundancy Error", "Ignored Files"
+]
+
+for error_type in error_types:
+    logger = logging.getLogger(error_type)
+    handler = logging.FileHandler(f"transferLogs/{error_type.replace(' ', '')}.log")
+    handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(handler)
+    logger.setLevel(logging.ERROR)
+    error_loggers[error_type] = logger
 
 class ModelGraphTransfer:
     def __init__(self, token_generator, proxy):
@@ -19,17 +39,7 @@ class ModelGraphTransfer:
         self.access_token = self.token_generator.generate_access_token()['access_token']
         self.headers = {'Authorization': f'Bearer {self.access_token}'}
         self.proxies = {'http': self.proxy, 'https': self.proxy}
-        self.error_logs = {
-            "Connection Error": [],
-            "Authentication Error": [],
-            "Data Format Error": [],
-            "Access Rights Error": [],
-            "Network Error": [],
-            "Quota Error": [],
-            "File Error": [],
-            "Cyclic Redundancy Error": [],
-            "Ignored Files": []
-        }
+        self.error_logs = {error_type: [] for error_type in error_types}
         self.transferred_files = []
 
     def get_channel_files_folder(self, group_id, channel_id):
@@ -42,6 +52,7 @@ class ModelGraphTransfer:
         except requests.exceptions.RequestException as e:
             logging.error(f"Erreur lors de la récupération du répertoire des fichiers : {e}")
             self.error_logs["Connection Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
+            error_loggers["Connection Error"].error(f"Group ID: {group_id}, Channel ID: {channel_id} - {e}")
             return None
 
     def item_exists(self, site_id, parent_item_id, item_name):
@@ -58,6 +69,7 @@ class ModelGraphTransfer:
         except requests.exceptions.RequestException as e:
             logging.error(f"Erreur lors de la vérification de l'existence de l'item : {e}")
             self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+            error_loggers["Connection Error"].error(f"Site ID: {site_id}, Parent Item ID: {parent_item_id} - {e}")
             return False
 
     def create_folder(self, site_id, parent_item_id, folder_name):
@@ -75,6 +87,7 @@ class ModelGraphTransfer:
         except requests.exceptions.RequestException as e:
             logging.error(f"Erreur lors de la création du dossier : {e}")
             self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Folder Name: {folder_name}")
+            error_loggers["Connection Error"].error(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Folder Name: {folder_name} - {e}")
             return None
 
     def upload_file_to_channel(self, site_id, parent_item_id, file_path):
@@ -96,6 +109,7 @@ class ModelGraphTransfer:
         except requests.exceptions.RequestException as e:
             logging.error(f"Erreur lors du téléversement du fichier : {e}")
             self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+            error_loggers["File Error"].error(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path} - {e}")
             self.transferred_files.append((file_name, "error"))
             return file_name, None
 
@@ -108,6 +122,7 @@ class ModelGraphTransfer:
         else:
             logging.error("Erreur : 'parentReference' absent dans la réponse de l'API.")
             self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
+            error_loggers["Data Format Error"].error(f"Group ID: {group_id}, Channel ID: {channel_id}")
             drive_id = None
             parent_item_id = None
 
