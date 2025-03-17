@@ -12,17 +12,19 @@ class ModelGraphTransfer:
         """Valide les IDs de groupe, canal et site."""
         if not all([group_id, channel_id, site_id]):
             raise ValueError("Les IDs de groupe, canal et site sont requis.")
-        # Ajouter d'autres validations si nécessaire (ex : format des IDs)
+        self.logger.info(f"Validation des IDs réussie : group_id={group_id}, channel_id={channel_id}, site_id={site_id}")
 
     def get_channel_files_folder(self, group_id, channel_id):
         """Récupère le dossier de fichiers associé à un canal Teams."""
         self._validate_ids(group_id, channel_id, "dummy_site_id")  # Validation des IDs
         url = f"https://graph.microsoft.com/v1.0/teams/{group_id}/channels/{channel_id}/filesFolder"
+        self.logger.info(f"Récupération du dossier de fichiers pour group_id={group_id}, channel_id={channel_id}")
         return self.graph_api.get(url)
 
     def item_exists(self, site_id, parent_item_id, item_name):
         """Vérifie si un fichier ou dossier existe déjà."""
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
+        self.logger.info(f"Vérification de l'existence de l'item : site_id={site_id}, parent_item_id={parent_item_id}, item_name={item_name}")
         items = self.graph_api.get(url).get('value', [])
         return any(item['name'] == item_name for item in items)
 
@@ -34,22 +36,25 @@ class ModelGraphTransfer:
             'folder': {},
             '@microsoft.graph.conflictBehavior': 'fail'
         }
+        self.logger.info(f"Création du dossier : site_id={site_id}, parent_item_id={parent_item_id}, folder_name={folder_name}")
         return self.graph_api.post(url, data)
 
     def upload_file_to_channel(self, site_id, parent_item_id, file_path):
         """Télécharge un fichier dans un canal Teams."""
         file_name = os.path.basename(file_path)
         if self.item_exists(site_id, parent_item_id, file_name):
+            self.logger.warning(f"Le fichier existe déjà : {file_name}")
             return file_name, "exists"
 
         encoded_file_name = quote(file_name, safe='')
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/content"
         try:
             with open(file_path, 'rb') as file:
+                self.logger.info(f"Téléversement du fichier : {file_name}")
                 self.graph_api.put(url, file.read())
                 return file_name, "uploaded"
         except Exception as e:
-            self.logger.error(f"Error uploading file: {e}")
+            self.logger.error(f"Erreur lors du téléversement du fichier {file_name}: {e}", exc_info=True)
             raise
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
@@ -58,7 +63,7 @@ class ModelGraphTransfer:
         files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
         if 'parentReference' not in files_folder_response:
-            self.logger.error("Error: 'parentReference' does not exist in the API response.")
+            self.logger.error("Erreur : 'parentReference' absent dans la réponse de l'API.")
             raise ValueError("Invalid API response")
 
         drive_id = files_folder_response['parentReference']['driveId']
@@ -88,4 +93,5 @@ class ModelGraphTransfer:
                 if status != "exists":
                     completed_files += 1
 
+        self.logger.info(f"Transfert terminé : {completed_files}/{total_files} fichiers copiés.")
         return completed_files, total_files

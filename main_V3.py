@@ -6,6 +6,10 @@ from apiAuthenfication.msgraphAuth import TokenGenerator
 from settings.config import app_id, client_secret, tenant_id, scopes, proxy, migration_Route_Map
 from controller.controller_transfer import ControllerGraphTransfer
 from view import ConsoleView
+from logging_config import setup_logging
+
+# Configuration du logging
+setup_logging()
 
 console = Console()
 
