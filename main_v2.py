@@ -1,19 +1,13 @@
 import json
-import os
 from pathlib import Path
-
-import requests
 from rich.console import Console
+from authentication import TokenGenerator
+from settings.config import app_id, client_secret, tenant_id, scopes, proxy, migration_Route_Map
+from controller import ControllerGraphTransfer
 
-from apiAuthenfication.msgraphAuth import TokenGenerator
-from settings.config import app_id, client_secret, tenant_id, scopes, proxy
-from settings.config import migration_Route_Map
-from controler.controller_transfer import ControllerGraphTransfer
-from views import View
+console = Console()
 
-view = View()
-
-# Load the JSON data
+# Charger les données de migration
 with open(migration_Route_Map, 'r', encoding='utf-8') as file:
     data = json.load(file)
 
@@ -27,14 +21,13 @@ for team_name, team_info in data.items():
     channel_id = team_info["destination_to"]["channel_id"]
     site_id = team_info["destination_to"]["site_id"]
 
-    view.display_message(f"Début de la migration pour l'équipe: {team_name}")
+    console.print(f"[bold]Début de la migration pour l'équipe: {team_name}[/bold]")
 
     for folder_name, folder_path in team_info["folders_to_migrate"].items():
         DEPOT_DATA_DIRECTORY_PATH = Path(folder_path)
-
-        view.display_message(f"Transfert du dossier: {folder_name} situé à {folder_path}")
+        console.print(f"Transfert du dossier: {folder_name} situé à {folder_path}")
         controller.transfer_data_folder_to_channel(team_id, channel_id, site_id, DEPOT_DATA_DIRECTORY_PATH)
 
-    view.display_message(f"Migration terminée pour l'équipe: {team_name}")
+    console.print(f"[bold]Migration terminée pour l'équipe: {team_name}[/bold]")
 
-view.display_message("Data transfer completed for all teams.")
+console.print("[bold green]Data transfer completed for all teams.[/bold green]")

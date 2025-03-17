@@ -32,3 +32,6 @@ class TokenGenerator:
         if 'access_token' not in self.token_response:
             raise Exception("Failed to obtain access token")
         return self.token_response
+
+get_token = TokenGenerator(app_id, client_secret, tenant_id, proxy, scopes)
+tokenverify = get_token.generate_access_token()

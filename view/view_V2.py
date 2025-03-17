@@ -1,38 +1,44 @@
 from rich.console import Console
 from rich.table import Table
-from rich.progress import Progress
+from rich.progress import Progress, BarColumn, TextColumn
+from rich.live import Live
+from rich.panel import Panel
 
-class View:
+class TransferView:
     def __init__(self):
         self.console = Console()
+        self.progress = Progress(
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        )
+        self.live = Live(auto_refresh=False)
 
-    def display_message(self, message, style="green"):
-        self.console.print(f"[{style}]{message}[/{style}]")
+    def display_header(self):
+        self.console.print(Panel.fit("[bold green]Début du transfert de fichiers[/bold green]"))
+
+    def display_transfer_summary(self, total_files, total_copied, duration):
+        table = Table(title="Résumé du Transfert")
+        table.add_column("Statistique", justify="right", style="cyan")
+        table.add_column("Valeur", style="magenta")
+
+        table.add_row("Fichiers totaux", str(total_files))
+        table.add_row("Fichiers copiés", str(total_copied))
+        table.add_row("Durée (secondes)", f"{duration:.2f}")
+
+        self.console.print(table)
 
     def display_error(self, error_message):
-        self.console.print(f"[red]{error_message}[/red]")
+        self.console.print(f"[red]Erreur : {error_message}[/red]")
 
-    def display_table(self, data, title="Data Table"):
-        table = Table(title=title)
+    def start_progress(self, total_files):
+        self.task = self.progress.add_task("[cyan]Transfert en cours...", total=total_files)
+        self.live.start()
 
-        # Assuming data is a list of dictionaries
-        if data and isinstance(data, list) and isinstance(data[0], dict):
-            for key in data[0].keys():
-                table.add_column(key)
+    def update_progress(self, current):
+        self.progress.update(self.task, completed=current)
+        self.live.update(self.progress)
 
-            for item in data:
-                table.add_row(*[str(item[key]) for key in item.keys()])
-
-            self.console.print(table)
-        else:
-            self.display_error("Invalid data format for table display.")
-
-    def display_progress(self, total, description="Processing..."):
-        with Progress() as progress:
-            task = progress.add_task(description, total=total)
-            while not progress.finished:
-                progress.update(task, advance=1)
-                time.sleep(0.1)  # Simulate work being done
-
-    def get_user_input(self, prompt):
-        return self.console.input(f"[cyan]{prompt}[/cyan] ")
+    def end_progress(self):
+        self.live.stop()
+        self.console.print("[bold green]Transfert terminé ![/bold green]")
