@@ -16,6 +16,11 @@ class ControllerGraphTransfer:
 
         completed_files, total_files = self.graph_api.transfer_data_folder_to_channel(group_id, channel_id, site_id, depot_data_directory_path)
 
+        # Mettre à jour la barre de progression en temps réel
+        for current in range(1, total_files + 1):
+            self.view.update_progress(current)
+            time.sleep(0.1)  # Simuler un délai pour la démonstration
+
         end_time = time.time()
         duration = end_time - start_time
 

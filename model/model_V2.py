@@ -159,7 +159,8 @@ class ModelGraphTransfer:
 
                     for file_name in files:
                         file_path = os.path.join(root, file_name)
-                        futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id, file_path))
+                        futures.append(
+                            executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id, file_path))
 
                 for future in as_completed(futures):
                     file_name, status = future.result()
