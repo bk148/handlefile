@@ -36,8 +36,8 @@ class MigrationLogger:
         # Formatter
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-        # Handler pour écrire dans un fichier
-        file_handler = logging.FileHandler(log_file)
+        # Handler pour écrire dans un fichier avec encodage UTF-8
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
