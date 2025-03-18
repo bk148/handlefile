@@ -1,5 +1,5 @@
-# model.py
-import concurrent.futures
+import concurrent
+import time
 import os
 import requests
 import logging
@@ -70,10 +70,6 @@ class ModelGraphTransfer:
 
     def upload_file_to_channel(self, site_id, parent_item_id, file_path):
         file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
-
-        if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
-            return self.upload_large_files(site_id, parent_item_id, file_path)
 
         if self.item_exists(site_id, parent_item_id, file_name):
             return file_name, "exists"
@@ -123,8 +119,10 @@ class ModelGraphTransfer:
             return file_name, None
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
+        # Obtenir le dossier de fichiers du canal
         files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
+        # Vérifier si 'parentReference' existe dans la réponse
         if 'parentReference' in files_folder_response:
             drive_id = files_folder_response['parentReference']['driveId']
             parent_item_id = files_folder_response['id']
@@ -135,6 +133,7 @@ class ModelGraphTransfer:
             parent_item_id = None
 
         if drive_id and parent_item_id:
+            # Créer le dossier parent
             folder_name = os.path.basename(depot_data_directory_path)
             if not self.item_exists(site_id, parent_item_id, folder_name):
                 folder_response = self.create_folder(site_id, parent_item_id, folder_name)
@@ -145,6 +144,7 @@ class ModelGraphTransfer:
                     headers=self.headers, proxies=self.proxies
                 ).json()['value'] if item['name'] == folder_name)
 
+            # Compter le nombre total de fichiers et dossiers à copier
             total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
             total_folders = sum([len(dirs) for _, dirs, _ in os.walk(depot_data_directory_path)])
             size_folder_source = sum(
@@ -152,6 +152,12 @@ class ModelGraphTransfer:
                  file in files])
 
             def process_file(file_path, site_id, current_parent_item_id):
+                file_name = os.path.basename(file_path)
+                file_size = os.path.getsize(file_path)
+
+                if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
+                    return self.upload_large_files(site_id, current_parent_item_id, file_path)
+
                 file_name, status = self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
                 if status == "exists":
                     logging.info(f"File {file_name} already exists, skipping.")
@@ -159,6 +165,7 @@ class ModelGraphTransfer:
                     logging.error(f"Failed to upload file {file_name}.")
                 return file_name, status
 
+            # Parcourir les fichiers et dossiers du partage réseau et les télécharger dans le canal Teams
             with Progress(
                     TextColumn("[progress.description]{task.description}"),
                     BarColumn(),
@@ -168,12 +175,13 @@ class ModelGraphTransfer:
             ) as progress:
                 task = progress.add_task("[green]Uploading files...", total=total_files, filename="")
 
-                with ThreadPoolExecutor(max_workers=10) as executor:
+                with ThreadPoolExecutor() as executor:
                     futures = []
                     for root, dirs, files in os.walk(depot_data_directory_path):
                         relative_path = os.path.relpath(root, depot_data_directory_path)
                         current_parent_item_id = parent_item_id
 
+                        # Créer les dossiers dans le canal Teams
                         if relative_path != ".":
                             for folder in relative_path.split(os.sep):
                                 if not self.item_exists(site_id, current_parent_item_id, folder):
@@ -187,6 +195,7 @@ class ModelGraphTransfer:
                                     ).json()['value'] if item['name'] == folder)
                                 progress.update(task, filename=f"Folder: {folder}")
 
+                        # Télécharger les fichiers dans le canal Teams avec une barre de progression
                         for file_name in files:
                             file_path = os.path.join(root, file_name)
                             futures.append(executor.submit(process_file, file_path, site_id, current_parent_item_id))
