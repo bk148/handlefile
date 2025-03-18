@@ -3,6 +3,7 @@ import requests
 import logging
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn
 from utilis.logger import MigrationLogger
 
 
@@ -158,8 +159,7 @@ class ModelGraphTransfer:
             drive_id = files_folder_response['parentReference']['driveId']
             parent_item_id = files_folder_response['id']
         else:
-            error_message = "Erreur : 'parentReference' n'existe pas dans la réponse de l'API."
-            self.logger.log_error(error_message)
+            logging.error("Error: 'parentReference' does not exist in the API response.")
             self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
             drive_id = None
             parent_item_id = None
@@ -197,43 +197,53 @@ class ModelGraphTransfer:
                     self.logger.log_error(f"Échec de l'upload du fichier '{file_name}'.")
                 return file_name, status
 
-            # Parcourir les fichiers et dossiers du partage réseau et les télécharger dans le canal Teams
-            with ThreadPoolExecutor() as executor:
-                futures = []
-                for root, dirs, files in os.walk(depot_data_directory_path):
-                    relative_path = os.path.relpath(root, depot_data_directory_path)
-                    current_parent_item_id = parent_item_id
+            # Barre de progression avec Rich
+            with Progress(
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+                    TimeRemainingColumn(),
+                    TextColumn("{task.completed}/{task.total} fichiers"),
+            ) as progress:
+                task = progress.add_task("[cyan]Transfert des fichiers...", total=total_files)
 
-                    # Créer les dossiers dans le canal Teams
-                    if relative_path != ".":
-                        for folder in relative_path.split(os.sep):
-                            if not self.item_exists(site_id, current_parent_item_id, folder):
-                                folder_response = self.create_folder(site_id, current_parent_item_id,
-                                                                     folder)
-                                current_parent_item_id = folder_response['id']
-                            else:
-                                current_parent_item_id = next(item['id'] for item in requests.get(
-                                    f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
-                                    headers=self.headers, proxies=self.proxies
-                                ).json()['value'] if item['name'] == folder)
-                            self.logger.log_info(f"Dossier '{folder}' traité.")
+                # Parcourir les fichiers et dossiers du partage réseau et les télécharger dans le canal Teams
+                with ThreadPoolExecutor() as executor:
+                    futures = []
+                    for root, dirs, files in os.walk(depot_data_directory_path):
+                        relative_path = os.path.relpath(root, depot_data_directory_path)
+                        current_parent_item_id = parent_item_id
 
-                    # Télécharger les fichiers dans le canal Teams
-                    for file_name in files:
-                        file_path = os.path.join(root, file_name)
-                        futures.append(executor.submit(process_file, file_path, site_id, current_parent_item_id))
-                        self.logger.log_info(f"Fichier '{file_name}' en cours de traitement.")
+                        # Créer les dossiers dans le canal Teams
+                        if relative_path != ".":
+                            for folder in relative_path.split(os.sep):
+                                if not self.item_exists(site_id, current_parent_item_id, folder):
+                                    folder_response = self.create_folder(site_id, current_parent_item_id,
+                                                                         folder)
+                                    current_parent_item_id = folder_response['id']
+                                else:
+                                    current_parent_item_id = next(item['id'] for item in requests.get(
+                                        f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
+                                        headers=self.headers, proxies=self.proxies
+                                    ).json()['value'] if item['name'] == folder)
+                                self.logger.log_info(f"Dossier '{folder}' traité.")
 
-                completed_files = 0
-                for future in as_completed(futures):
-                    file_name, status = future.result()
-                    if status != "exists":
-                        completed_files += 1
-                    self.logger.log_info(f"Fichier '{file_name}' traité avec le statut : {status}.")
+                        # Télécharger les fichiers dans le canal Teams avec une barre de progression
+                        for file_name in files:
+                            file_path = os.path.join(root, file_name)
+                            futures.append(executor.submit(process_file, file_path, site_id, current_parent_item_id))
+                            progress.update(task, advance=1, description=f"Traitement de {file_name}")
 
-                self.logger.log_info(f"Total des fichiers à copier : {total_files}")
-                self.logger.log_info(f"Fichiers copiés : {completed_files}")
-                self.logger.log_info(f"Fichiers restants : {total_files - completed_files}")
-                self.logger.log_info("Tous les fichiers ont été copiés avec succès.")
+                    completed_files = 0
+                    for future in as_completed(futures):
+                        file_name, status = future.result()
+                        if status != "exists":
+                            completed_files += 1
+                        progress.update(task, advance=1, description=f"Traitement de {file_name}")
+
+                    self.logger.log_info(f"Total des fichiers à copier : {total_files}")
+                    self.logger.log_info(f"Fichiers copiés : {completed_files}")
+                    self.logger.log_info(f"Fichiers restants : {total_files - completed_files}")
+                    self.logger.log_info("Tous les fichiers ont été copiés avec succès.")
 
             return size_folder_source, total_files, total_folders, completed_files
