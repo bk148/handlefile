@@ -1,43 +1,52 @@
 import json
+import os
 from pathlib import Path
+import requests
 from rich.console import Console
 
-from model import ModelGraphTransfer
-from controller import ControllerGraphTransfer
-from view.view import TransferView
-from settings.config import (
-    app_id, client_secret, tenant_id, scopes, proxy, migration_Route_Map
-)
-from apiAuthentication.msgraphAuth import TokenGenerator
+# Importations des modules personnalisés
+from apiAuthenfication.msgraphAuth import TokenGenerator
+from settings.config import app_id, client_secret, tenant_id, scopes, proxy
+from settings.config import migration_Route_Map
+from controler.controller_transfer import ControllerGraphTransfer
+from utilis.logger_v4 import MigrationLogger  # Import de la nouvelle classe de journalisation
 
+# Initialisation de la console Rich pour l'affichage coloré
 console = Console()
 
-def main():
-    try:
-        # Initialisation des composants
-        token_generator = TokenGenerator(app_id, client_secret, tenant_id, proxy, scopes)
-        view = TransferView()
-        controller = ControllerGraphTransfer(token_generator, proxy, view)
+# Charger les données de configuration depuis le fichier JSON
+with open(migration_Route_Map, 'r', encoding='utf-8') as file:
+    data = json.load(file)
 
-        # Chargement de la configuration
-        with open(migration_Route_Map, 'r', encoding='utf-8') as f:
-            migration_config = json.load(f)
+# Initialisation du logger
+logger = MigrationLogger(log_directory="logs")
 
-        # Exécution des migrations
-        for team_name, team_info in migration_config.items():
-            view.show_section_header(f"Migration de l'équipe: {team_name}")
-            controller.execute_migration(
-                team_info["team_id"],
-                team_info["destination_to"]["channel_id"],
-                team_info["destination_to"]["site_id"],
-                Path(team_info["folders_to_migrate"])
-            )
+# Obtenir le token d'accès via TokenGenerator
+token_generator = TokenGenerator(app_id, client_secret, tenant_id, proxy, scopes)
 
-        view.show_final_report(controller.get_stats())
+# Initialisation du contrôleur avec le token, le proxy et le logger
+controller = ControllerGraphTransfer(token_generator, proxy, logger)
 
-    except Exception as e:
-        view.log_critical_error(str(e))
-        raise
+# Itérer sur chaque équipe et transférer les dossiers
+for team_name, team_info in data.items():
+    team_id = team_info["team_id"]
+    channel_id = team_info["destination_to"]["channel_id"]
+    site_id = team_info["destination_to"]["site_id"]
 
-if __name__ == "__main__":
-    main()
+    console.print(f"[bold green]Début de la migration pour l'équipe: {team_name}[/bold green]")
+    logger.log_general_event(f"Début de la migration pour l'équipe: {team_name}")
+
+    for folder_name, folder_path in team_info["folders_to_migrate"].items():
+        DEPOT_DATA_DIRECTORY_PATH = Path(folder_path)
+
+        console.print(f"[bold blue]Transfert du dossier: {folder_name} situé à {folder_path}[/bold blue]")
+        logger.log_general_event(f"Transfert du dossier: {folder_name} situé à {folder_path}")
+
+        # Démarrer le transfert du dossier
+        controller.transfer_data_folder_to_channel(team_id, channel_id, site_id, DEPOT_DATA_DIRECTORY_PATH)
+
+    console.print(f"[bold green]Migration terminée pour l'équipe: {team_name}[/bold green]")
+    logger.log_general_event(f"Migration terminée pour l'équipe: {team_name}")
+
+console.print("[bold green]Data transfer completed for all teams.[/bold green]")
+logger.log_general_event("Data transfer completed for all teams.")

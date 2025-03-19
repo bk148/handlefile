@@ -1,107 +1,133 @@
 import logging
 import os
-from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 class MigrationLogger:
-    def __init__(self, log_dir="logs"):
-        self.log_dir = log_dir
-        self.start_time = None
-        self.end_time = None
-        self.total_files = 0
-        self.total_folders = 0
-        self.total_copied = 0
-        self.size_folder_source = 0
-        self.error_logs = {}
+    def __init__(self, log_directory="logs"):
+        """
+        Initialise le système de journalisation avec des catégories spécifiques.
+        :param log_directory: Répertoire où les fichiers de logs seront stockés.
+        """
+        self.log_directory = log_directory
+        self._ensure_log_directory_exists()
 
-        # Créer le répertoire de logs s'il n'existe pas
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
+        # Configuration des logs
+        self._setup_loggers()
 
-        # Configurer le logger principal
-        self.logger = logging.getLogger("MigrationLogger")
-        self.logger.setLevel(logging.INFO)
+    def _ensure_log_directory_exists(self):
+        """Crée le répertoire de logs s'il n'existe pas."""
+        if not os.path.exists(self.log_directory):
+            os.makedirs(self.log_directory)
 
-        # Formateur de logs
+    def _setup_loggers(self):
+        """Configure les différents loggers avec des handlers spécifiques."""
+        # Formateur de logs commun
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-        # Handler pour le fichier de log principal
-        log_file = os.path.join(self.log_dir, "Migration.log")
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
+        # Logger pour les fichiers en erreur
+        self.file_error_logger = self._create_logger(
+            name="file_error_logger",
+            log_file=os.path.join(self.log_directory, "file_errors.log"),
+            level=logging.ERROR,
+            formatter=formatter
+        )
 
-        # Handlers pour les fichiers d'erreur spécifiques
-        self.error_handlers = {
-            "Connection Error": self._create_error_handler("ConnectionError.log"),
-            "Authentication Error": self._create_error_handler("AuthenticationError.log"),
-            "Data Format Error": self._create_error_handler("DataFormatError.log"),
-            "Access Rights Error": self._create_error_handler("AccessRightsError.log"),
-            "Network Error": self._create_error_handler("NetworkError.log"),
-            "Quota Error": self._create_error_handler("QuotaError.log"),
-            "File Error": self._create_error_handler("FileError.log"),
-            "Cyclic Redundancy Error": self._create_error_handler("CyclicRedundancyError.log"),
-            "Ignored Files": self._create_error_handler("IgnoredFiles.log"),
-        }
+        # Logger pour les problèmes réseau
+        self.network_logger = self._create_logger(
+            name="network_logger",
+            log_file=os.path.join(self.log_directory, "network.log"),
+            level=logging.INFO,
+            formatter=formatter
+        )
 
-    def _create_error_handler(self, filename):
-        """Crée un handler de fichier pour un type d'erreur spécifique."""
-        handler = logging.FileHandler(os.path.join(self.log_dir, filename))
-        handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-        return handler
+        # Logger général pour les événements
+        self.general_logger = self._create_logger(
+            name="general_logger",
+            log_file=os.path.join(self.log_directory, "general.log"),
+            level=logging.INFO,
+            formatter=formatter
+        )
 
-    def start_log(self):
-        """Démarre la journalisation et enregistre l'heure de début."""
-        self.start_time = datetime.now()
-        self.logger.info(f"Migration started at {self.start_time}")
+        # Logger pour les succès
+        self.success_logger = self._create_logger(
+            name="success_logger",
+            log_file=os.path.join(self.log_directory, "success.log"),
+            level=logging.INFO,
+            formatter=formatter
+        )
 
-    def end_log(self, size_folder_source, total_files, total_folders, total_contenu_copied, error_logs):
-        """Termine la journalisation et enregistre les statistiques."""
-        self.end_time = datetime.now()
-        self.size_folder_source = size_folder_source
-        self.total_files = total_files
-        self.total_folders = total_folders
-        self.total_copied = total_contenu_copied
-        self.error_logs = error_logs
+    def _create_logger(self, name, log_file, level, formatter):
+        """
+        Crée un logger avec un handler de fichier rotatif.
+        :param name: Nom du logger.
+        :param log_file: Chemin du fichier de log.
+        :param level: Niveau de log (ex: logging.INFO, logging.ERROR).
+        :param formatter: Formateur de logs.
+        :return: Instance de logger configurée.
+        """
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
 
-        # Enregistrer les statistiques
-        self.logger.info(f"Migration ended at {self.end_time}")
-        self.logger.info(f"Total files to copy: {self.total_files}")
-        self.logger.info(f"Files copied: {self.total_copied}")
-        self.logger.info(f"Remaining files: {self.total_files - self.total_copied}")
-        self.logger.info(f"Total folders created: {self.total_folders}")
-        self.logger.info(f"Total data size: {self.size_folder_source / (1024 * 1024):.2f} MB")
-        self.logger.info(f"Total duration: {(self.end_time - self.start_time).total_seconds():.2f} seconds")
+        # Handler pour écrire dans un fichier avec rotation
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,  # 10 MB par fichier
+            backupCount=5  # Conserve les 5 derniers fichiers
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
-        # Enregistrer les erreurs dans les fichiers spécifiques
-        for error_type, errors in self.error_logs.items():
-            if errors:
-                handler = self.error_handlers.get(error_type)
-                if handler:
-                    logger = logging.getLogger(error_type)
-                    logger.addHandler(handler)
-                    for error in errors:
-                        logger.error(error)
-                    logger.removeHandler(handler)
+        return logger
 
-        # Afficher un tableau récapitulatif
-        self._print_summary_table()
+    def log_file_error(self, message, context=None):
+        """
+        Journalise une erreur liée aux fichiers.
+        :param message: Message d'erreur.
+        :param context: Contexte supplémentaire (ex: fichier concerné, chemin, etc.).
+        """
+        if context:
+            message = f"{message} | Context: {context}"
+        self.file_error_logger.error(message)
 
-    def _print_summary_table(self):
-        """Affiche un tableau récapitulatif des statistiques."""
-        from rich.table import Table
-        from rich.console import Console
+    def log_network_error(self, message, status_code=None, url=None):
+        """
+        Journalise une erreur réseau ou une réponse HTTP.
+        :param message: Message d'erreur ou de succès.
+        :param status_code: Code de statut HTTP (ex: 401, 429).
+        :param url: URL concernée.
+        """
+        if status_code:
+            message = f"{message} | Status Code: {status_code}"
+        if url:
+            message = f"{message} | URL: {url}"
+        self.network_logger.error(message)
 
-        console = Console()
+    def log_network_success(self, message, status_code=None, url=None):
+        """
+        Journalise une réussite réseau.
+        :param message: Message de succès.
+        :param status_code: Code de statut HTTP (ex: 200).
+        :param url: URL concernée.
+        """
+        if status_code:
+            message = f"{message} | Status Code: {status_code}"
+        if url:
+            message = f"{message} | URL: {url}"
+        self.network_logger.info(message)
 
-        table = Table(title="Migration Summary", show_header=True, header_style="bold magenta")
-        table.add_column("Metric", style="dim")
-        table.add_column("Value", justify="right")
+    def log_general_event(self, message):
+        """
+        Journalise un événement général.
+        :param message: Message à journaliser.
+        """
+        self.general_logger.info(message)
 
-        table.add_row("Total files to copy", str(self.total_files))
-        table.add_row("Files copied", str(self.total_copied))
-        table.add_row("Remaining files", str(self.total_files - self.total_copied))
-        table.add_row("Total folders created", str(self.total_folders))
-        table.add_row("Total data size", f"{self.size_folder_source / (1024 * 1024):.2f} MB")
-        table.add_row("Total duration", f"{(self.end_time - self.start_time).total_seconds():.2f} seconds")
-
-        console.print(table)
+    def log_success(self, message, context=None):
+        """
+        Journalise une opération réussie.
+        :param message: Message de succès.
+        :param context: Contexte supplémentaire (ex: fichier transféré, dossier créé).
+        """
+        if context:
+            message = f"{message} | Context: {context}"
+        self.success_logger.info(message)
