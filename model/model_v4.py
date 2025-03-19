@@ -117,16 +117,22 @@ class ModelGraphTransfer:
             self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path, group_name=None,
+                                        channel_name=None):
         """
         Transfère un dossier entier vers un canal Teams.
         :param group_id: ID du groupe Teams.
         :param channel_id: ID du canal Teams.
         :param site_id: ID du site SharePoint.
         :param depot_data_directory_path: Chemin du dossier local à transférer.
+        :param group_name: Nom du groupe Teams (optionnel).
+        :param channel_name: Nom du canal Teams (optionnel).
         :return: Tuple contenant la taille du dossier source, le nombre total de fichiers, le nombre total de dossiers, et le nombre de fichiers copiés.
         """
-        self.logger.log_general_event(f"Début du transfert du dossier {depot_data_directory_path} vers le canal {channel_id}.")
+        self.logger.log_general_event(
+            f"Début du transfert du dossier '{depot_data_directory_path}' vers le canal '{channel_name}' (ID: {channel_id}) "
+            f"dans le groupe '{group_name}' (ID: {group_id})."
+        )
 
         total_files = 0
         total_folders = 0
@@ -137,12 +143,18 @@ class ModelGraphTransfer:
             # Récupérer le dossier de fichiers du canal
             folder_info = self.get_channel_files_folder(group_id, channel_id)
             if not folder_info:
-                self.logger.log_file_error("Impossible de récupérer le dossier de fichiers du canal.", context=f"Group ID: {group_id}, Channel ID: {channel_id}")
+                self.logger.log_file_error(
+                    "Impossible de récupérer le dossier de fichiers du canal.",
+                    context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
+                )
                 return size_folder_source, total_files, total_folders, total_copied
 
             parent_item_id = folder_info.get('id')
             if not parent_item_id:
-                self.logger.log_file_error("ID du dossier parent introuvable.", context=f"Group ID: {group_id}, Channel ID: {channel_id}")
+                self.logger.log_file_error(
+                    "ID du dossier parent introuvable.",
+                    context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
+                )
                 return size_folder_source, total_files, total_folders, total_copied
 
             # Parcourir le dossier local
@@ -153,7 +165,10 @@ class ModelGraphTransfer:
                     folder_name = os.path.basename(relative_path)
                     if not self.item_exists(site_id, parent_item_id, folder_name):
                         self.create_folder(site_id, parent_item_id, folder_name)
-                        self.logger.log_success(f"Dossier {folder_name} créé avec succès.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+                        self.logger.log_success(
+                            f"Dossier '{folder_name}' créé avec succès.",
+                            context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
+                        )
                     total_folders += 1
 
                 # Télécharger les fichiers
@@ -165,18 +180,30 @@ class ModelGraphTransfer:
                     # Télécharger le fichier
                     result = self.upload_file_to_channel(site_id, parent_item_id, file_path)
                     if result[1] == "exists":
-                        self.logger.log_general_event(f"Le fichier {file} existe déjà. Ignoré.")
+                        self.logger.log_general_event(f"Le fichier '{file}' existe déjà. Ignoré.")
                     elif result[1]:
-                        self.logger.log_success(f"Fichier {file} téléchargé avec succès.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+                        self.logger.log_success(
+                            f"Fichier '{file}' téléchargé avec succès.",
+                            context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
+                        )
                         total_copied += 1
                     else:
-                        self.logger.log_file_error(f"Échec du téléchargement du fichier {file}.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+                        self.logger.log_file_error(
+                            f"Échec du téléchargement du fichier '{file}'.",
+                            context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
+                        )
 
                     total_files += 1
 
-            self.logger.log_general_event(f"Transfert du dossier {depot_data_directory_path} terminé. Fichiers copiés: {total_copied}/{total_files}")
+            self.logger.log_general_event(
+                f"Transfert du dossier '{depot_data_directory_path}' terminé. "
+                f"Fichiers copiés: {total_copied}/{total_files}"
+            )
             return size_folder_source, total_files, total_folders, total_copied
 
         except Exception as e:
-            self.logger.log_file_error(f"Erreur lors du transfert du dossier {depot_data_directory_path}.", context=f"Erreur: {e}")
+            self.logger.log_file_error(
+                f"Erreur lors du transfert du dossier '{depot_data_directory_path}'.",
+                context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id}), Erreur: {e}"
+            )
             return size_folder_source, total_files, total_folders, total_copied
