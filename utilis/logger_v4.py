@@ -4,13 +4,23 @@ from datetime import datetime
 class MigrationLogger:
     def __init__(self):
         # Configuration de la journalisation
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            filename='transfer_logs.log',
-            filemode='a'
-        )
         self.logger = logging.getLogger("MigrationLogger")
+        self.logger.setLevel(logging.INFO)  # Niveau de journalisation
+
+        # Créer un gestionnaire de fichier
+        file_handler = logging.FileHandler('transfer.log', mode='a')
+        file_handler.setLevel(logging.INFO)
+
+        # Formatter les logs
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+
+        # Ajouter le gestionnaire au logger
+        self.logger.addHandler(file_handler)
+
+        # Désactiver la propagation vers la console
+        self.logger.propagate = False
+
         self.start_time = None
 
     def start_log(self):

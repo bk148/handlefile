@@ -3,7 +3,7 @@ import requests
 import logging
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
-from rich.progress import Progress, TextColumn, BarColumn
+from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn
 
 # Configuration de la journalisation
 logging.basicConfig(
@@ -169,31 +169,45 @@ class ModelGraphTransfer:
                 headers=self.headers, proxies=self.proxies
             ).json()['value'] if item['name'] == folder_name)
 
-        # Parcourir les fichiers et dossiers
-        for root, dirs, files in os.walk(depot_data_directory_path):
-            relative_path = os.path.relpath(root, depot_data_directory_path)
-            current_parent_item_id = parent_item_id
+        # Compter le nombre total de fichiers
+        total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
 
-            # Créer les dossiers dans le canal Teams
-            if relative_path != ".":
-                for folder in relative_path.split(os.sep):
-                    if not self.item_exists(site_id, current_parent_item_id, folder):
-                        folder_response = self.create_folder(site_id, current_parent_item_id, folder)
-                        current_parent_item_id = folder_response['id']
+        # Barre de progression
+        with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+                TextColumn("{task.completed}/{task.total} files"),
+                TimeRemainingColumn()
+        ) as progress:
+            task = progress.add_task("[green]Uploading files...", total=total_files)
+
+            # Parcourir les fichiers et dossiers
+            for root, dirs, files in os.walk(depot_data_directory_path):
+                relative_path = os.path.relpath(root, depot_data_directory_path)
+                current_parent_item_id = parent_item_id
+
+                # Créer les dossiers dans le canal Teams
+                if relative_path != ".":
+                    for folder in relative_path.split(os.sep):
+                        if not self.item_exists(site_id, current_parent_item_id, folder):
+                            folder_response = self.create_folder(site_id, current_parent_item_id, folder)
+                            current_parent_item_id = folder_response['id']
+                        else:
+                            current_parent_item_id = next(item['id'] for item in requests.get(
+                                f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
+                                headers=self.headers, proxies=self.proxies
+                            ).json()['value'] if item['name'] == folder)
+
+                # Télécharger les fichiers
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    file_size = os.path.getsize(file_path)
+                    if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
+                        logging.info(f"Large file detected: {file_name}. Using upload_large_files.")
+                        self.upload_large_files(site_id, current_parent_item_id, file_path)
                     else:
-                        current_parent_item_id = next(item['id'] for item in requests.get(
-                            f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
-                            headers=self.headers, proxies=self.proxies
-                        ).json()['value'] if item['name'] == folder)
-
-            # Télécharger les fichiers
-            for file_name in files:
-                file_path = os.path.join(root, file_name)
-                file_size = os.path.getsize(file_path)
-                if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
-                    logging.info(f"Large file detected: {file_name}. Using upload_large_files.")
-                    self.upload_large_files(site_id, current_parent_item_id, file_path)
-                else:
-                    self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
+                        self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
+                    progress.update(task, advance=1, description=f"Uploading {file_name}")
 
         logging.info("Transfer completed successfully.")

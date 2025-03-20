@@ -7,14 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from model.model_transfer import ModelGraphTransfer
 from utilis.logger_v4 import MigrationLogger
 
-# Configuration de la journalisation
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='transfer_logs.log',
-    filemode='a'
-)
-
 class ControllerGraphTransfer:
     def __init__(self, token_generator, proxy):
         self.graph_api = ModelGraphTransfer(token_generator, proxy)
