@@ -30,14 +30,16 @@ class MigrationLogger:
         self.logger.info(f"Migration started at: {self.start_time}")
         self.logger.info("=" * 50)
 
-    def end_log(self, size_folder_source=None, total_files=None, total_folders=None, total_contenu_copied=None, error_logs=None):
+    def end_log(self, size_folder_source=None, total_files=None, total_folders=None, total_contenu_copied=None,
+                error_logs=None):
         """Termine la journalisation et enregistre un résumé du transfert."""
         end_time = datetime.now()
         duration = end_time - self.start_time
+        duration_formatted = str(timedelta(seconds=int(duration.total_seconds())))
 
         self.logger.info("=" * 50)
         self.logger.info(f"Migration completed at: {end_time}")
-        self.logger.info(f"Total duration: {duration}")
+        self.logger.info(f"Total duration: {duration_formatted}")
         self.logger.info(f"Total data volume: {size_folder_source / (1024 * 1024):.2f} MB")
         self.logger.info(f"Total files: {total_files}")
         self.logger.info(f"Total folders: {total_folders}")
