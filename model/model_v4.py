@@ -1,15 +1,19 @@
 import os
 import requests
+import logging
 from urllib.parse import quote
+from concurrent.futures import ThreadPoolExecutor
+from rich.progress import Progress, TextColumn, BarColumn
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ModelGraphTransfer:
-    def __init__(self, token_generator, proxy, logger):
+    def __init__(self, token_generator, proxy):
         self.token_generator = token_generator
         self.proxy = proxy
-        self.access_token = self.token_generator.generate_access_token()['access_token']
+        self.access_token = self.token_generator.get_valid_token()
         self.headers = {'Authorization': f'Bearer {self.access_token}'}
         self.proxies = {'http': self.proxy, 'https': self.proxy}
-        self.logger = logger
         self.error_logs = {
             "Connection Error": [],
             "Authentication Error": [],
@@ -22,19 +26,28 @@ class ModelGraphTransfer:
             "Ignored Files": []
         }
 
+    def refresh_token(self):
+        """Rafraîchit le token et met à jour les en-têtes."""
+        self.access_token = self.token_generator.get_valid_token()
+        self.headers['Authorization'] = f'Bearer {self.access_token}'
+        logging.info("Token refreshed.")
+
     def get_channel_files_folder(self, group_id, channel_id):
+        """Récupère le dossier de fichiers du canal."""
+        self.refresh_token()
         url = f"https://graph.microsoft.com/v1.0/teams/{group_id}/channels/{channel_id}/filesFolder"
         try:
             response = requests.get(url, headers=self.headers, proxies=self.proxies)
             response.raise_for_status()
-            self.logger.log_network_success("Dossier de fichiers récupéré avec succès.", status_code=response.status_code, url=url)
             return response.json()
         except requests.exceptions.RequestException as e:
-            self.logger.log_network_error(f"Erreur lors de la récupération du dossier de fichiers: {e}", status_code=response.status_code if 'response' in locals() else None, url=url)
+            logging.error(f"Error retrieving channel files folder: {e}")
             self.error_logs["Connection Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
             return None
 
     def item_exists(self, site_id, parent_item_id, item_name):
+        """Vérifie si un fichier ou dossier existe déjà."""
+        self.refresh_token()
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
         try:
             response = requests.get(url, headers=self.headers, proxies=self.proxies)
@@ -42,15 +55,17 @@ class ModelGraphTransfer:
             items = response.json().get('value', [])
             for item in items:
                 if item['name'] == item_name:
-                    self.logger.log_general_event(f"L'élément {item_name} existe déjà.")
                     return True
             return False
         except requests.exceptions.RequestException as e:
-            self.logger.log_network_error(f"Erreur lors de la vérification de l'existence de l'élément: {e}", status_code=response.status_code if 'response' in locals() else None, url=url)
+            logging.error(f"Error checking item existence: {e}")
             self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
             return False
 
     def create_folder(self, site_id, parent_item_id, folder_name):
+        """Crée un dossier dans le canal Teams."""
+        self.refresh_token()
+        encoded_folder_name = quote(folder_name)
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
         data = {
             'name': folder_name,
@@ -60,18 +75,19 @@ class ModelGraphTransfer:
         try:
             response = requests.post(url, headers=self.headers, json=data, proxies=self.proxies)
             response.raise_for_status()
-            self.logger.log_success(f"Dossier {folder_name} créé avec succès.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+            logging.info(f"Folder '{folder_name}' created successfully.")
             return response.json()
         except requests.exceptions.RequestException as e:
-            self.logger.log_file_error(f"Erreur lors de la création du dossier {folder_name}.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Erreur: {e}")
+            logging.error(f"Error creating folder: {e}")
             self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Folder Name: {folder_name}")
             return None
 
     def upload_file_to_channel(self, site_id, parent_item_id, file_path):
+        """Télécharge un fichier vers le canal Teams."""
+        self.refresh_token()
         file_name = os.path.basename(file_path)
-
         if self.item_exists(site_id, parent_item_id, file_name):
-            self.logger.log_general_event(f"Le fichier {file_name} existe déjà. Aucune action nécessaire.")
+            logging.info(f"File '{file_name}' already exists, skipping.")
             return file_name, "exists"
 
         encoded_file_name = quote(file_name, safe='')
@@ -80,14 +96,20 @@ class ModelGraphTransfer:
             with open(file_path, 'rb') as file:
                 response = requests.put(url, headers=self.headers, data=file, proxies=self.proxies)
                 response.raise_for_status()
-                self.logger.log_success(f"Fichier {file_name} téléchargé avec succès.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+                logging.info(f"File '{file_name}' uploaded successfully.")
                 return file_name, response.status_code
-        except requests.exceptions.RequestException as e:
-            self.logger.log_file_error(f"Erreur lors du téléchargement du fichier {file_name}.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Erreur: {e}")
-            self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
-            return file_name, None
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:  # Token expiré
+                self.refresh_token()
+                return self.upload_file_to_channel(site_id, parent_item_id, file_path)  # Réessayer
+            else:
+                logging.error(f"Error uploading file '{file_name}': {e}")
+                self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+                return file_name, None
 
     def upload_large_files(self, site_id, parent_item_id, file_path):
+        """Télécharge un fichier volumineux en morceaux."""
+        self.refresh_token()
         file_name = os.path.basename(file_path)
         encoded_file_name = quote(file_name, safe='')
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/createUploadSession"
@@ -110,100 +132,62 @@ class ModelGraphTransfer:
                     chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data, proxies=self.proxies)
                     chunk_response.raise_for_status()
 
-            self.logger.log_success(f"Fichier volumineux {file_name} téléchargé avec succès.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+            logging.info(f"Large file '{file_name}' uploaded successfully.")
             return file_name, "uploaded"
         except requests.exceptions.RequestException as e:
-            self.logger.log_file_error(f"Erreur lors du téléchargement du fichier volumineux {file_name}.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Erreur: {e}")
+            logging.error(f"Error uploading large file '{file_name}': {e}")
             self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path, group_name=None,
-                                        channel_name=None):
-        """
-        Transfère un dossier entier vers un canal Teams.
-        :param group_id: ID du groupe Teams.
-        :param channel_id: ID du canal Teams.
-        :param site_id: ID du site SharePoint.
-        :param depot_data_directory_path: Chemin du dossier local à transférer.
-        :param group_name: Nom du groupe Teams (optionnel).
-        :param channel_name: Nom du canal Teams (optionnel).
-        :return: Tuple contenant la taille du dossier source, le nombre total de fichiers, le nombre total de dossiers, et le nombre de fichiers copiés.
-        """
-        self.logger.log_general_event(
-            f"Début du transfert du dossier '{depot_data_directory_path}' vers le canal '{channel_name}' (ID: {channel_id}) "
-            f"dans le groupe '{group_name}' (ID: {group_id})."
-        )
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
+        """Transfère un dossier entier vers le canal Teams."""
+        logging.info(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
+        files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
-        total_files = 0
-        total_folders = 0
-        total_copied = 0
-        size_folder_source = 0
+        if 'parentReference' not in files_folder_response:
+            logging.error("Error: 'parentReference' does not exist in the API response.")
+            self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
+            return
 
-        try:
-            # Récupérer le dossier de fichiers du canal
-            folder_info = self.get_channel_files_folder(group_id, channel_id)
-            if not folder_info:
-                self.logger.log_file_error(
-                    "Impossible de récupérer le dossier de fichiers du canal.",
-                    context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
-                )
-                return size_folder_source, total_files, total_folders, total_copied
+        drive_id = files_folder_response['parentReference']['driveId']
+        parent_item_id = files_folder_response['id']
 
-            parent_item_id = folder_info.get('id')
-            if not parent_item_id:
-                self.logger.log_file_error(
-                    "ID du dossier parent introuvable.",
-                    context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
-                )
-                return size_folder_source, total_files, total_folders, total_copied
+        # Créer le dossier parent
+        folder_name = os.path.basename(depot_data_directory_path)
+        if not self.item_exists(site_id, parent_item_id, folder_name):
+            folder_response = self.create_folder(site_id, parent_item_id, folder_name)
+            parent_item_id = folder_response['id']
+        else:
+            parent_item_id = next(item['id'] for item in requests.get(
+                f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children",
+                headers=self.headers, proxies=self.proxies
+            ).json()['value'] if item['name'] == folder_name)
 
-            # Parcourir le dossier local
-            for root, dirs, files in os.walk(depot_data_directory_path):
-                # Créer les dossiers dans le canal
-                relative_path = os.path.relpath(root, depot_data_directory_path)
-                if relative_path != ".":
-                    folder_name = os.path.basename(relative_path)
-                    if not self.item_exists(site_id, parent_item_id, folder_name):
-                        self.create_folder(site_id, parent_item_id, folder_name)
-                        self.logger.log_success(
-                            f"Dossier '{folder_name}' créé avec succès.",
-                            context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
-                        )
-                    total_folders += 1
+        # Parcourir les fichiers et dossiers
+        for root, dirs, files in os.walk(depot_data_directory_path):
+            relative_path = os.path.relpath(root, depot_data_directory_path)
+            current_parent_item_id = parent_item_id
 
-                # Télécharger les fichiers
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    file_size = os.path.getsize(file_path)
-                    size_folder_source += file_size
-
-                    # Télécharger le fichier
-                    result = self.upload_file_to_channel(site_id, parent_item_id, file_path)
-                    if result[1] == "exists":
-                        self.logger.log_general_event(f"Le fichier '{file}' existe déjà. Ignoré.")
-                    elif result[1]:
-                        self.logger.log_success(
-                            f"Fichier '{file}' téléchargé avec succès.",
-                            context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
-                        )
-                        total_copied += 1
+            # Créer les dossiers dans le canal Teams
+            if relative_path != ".":
+                for folder in relative_path.split(os.sep):
+                    if not self.item_exists(site_id, current_parent_item_id, folder):
+                        folder_response = self.create_folder(site_id, current_parent_item_id, folder)
+                        current_parent_item_id = folder_response['id']
                     else:
-                        self.logger.log_file_error(
-                            f"Échec du téléchargement du fichier '{file}'.",
-                            context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id})"
-                        )
+                        current_parent_item_id = next(item['id'] for item in requests.get(
+                            f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
+                            headers=self.headers, proxies=self.proxies
+                        ).json()['value'] if item['name'] == folder)
 
-                    total_files += 1
+            # Télécharger les fichiers
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                file_size = os.path.getsize(file_path)
+                if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
+                    logging.info(f"Large file detected: {file_name}. Using upload_large_files.")
+                    self.upload_large_files(site_id, current_parent_item_id, file_path)
+                else:
+                    self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
 
-            self.logger.log_general_event(
-                f"Transfert du dossier '{depot_data_directory_path}' terminé. "
-                f"Fichiers copiés: {total_copied}/{total_files}"
-            )
-            return size_folder_source, total_files, total_folders, total_copied
-
-        except Exception as e:
-            self.logger.log_file_error(
-                f"Erreur lors du transfert du dossier '{depot_data_directory_path}'.",
-                context=f"Groupe '{group_name}' (ID: {group_id}), Canal '{channel_name}' (ID: {channel_id}), Erreur: {e}"
-            )
-            return size_folder_source, total_files, total_folders, total_copied
+        logging.info("Transfer completed successfully.")

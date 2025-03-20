@@ -2,85 +2,39 @@ import os
 import time
 from rich.console import Console
 from rich.progress import Progress, BarColumn, TextColumn
-
-# Importations des modules personnalisés
+from concurrent.futures import ThreadPoolExecutor
 from model.model_transfer import ModelGraphTransfer
 from utilis.logger_v4 import MigrationLogger
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 class ControllerGraphTransfer:
-    def __init__(self, token_generator, proxy, logger):
-        """
-        Initialise le contrôleur avec le générateur de token, le proxy et le logger.
-        :param token_generator: Instance de TokenGenerator pour obtenir les tokens d'accès.
-        :param proxy: Proxy à utiliser pour les requêtes.
-        :param logger: Instance de MigrationLogger pour la journalisation.
-        """
-        self.graph_api = ModelGraphTransfer(token_generator, proxy, logger)  # Passe le logger au modèle
+    def __init__(self, token_generator, proxy):
+        self.graph_api = ModelGraphTransfer(token_generator, proxy)
         self.console = Console()
-        self.logger = logger  # Stocke le logger pour une utilisation locale
+        self.logger = MigrationLogger()
 
-    def create_folder(self, site_id, parent_item_id, folder_name):
-        """
-        Crée un dossier dans le canal Teams.
-        :param site_id: ID du site SharePoint.
-        :param parent_item_id: ID du dossier parent.
-        :param folder_name: Nom du dossier à créer.
-        :return: Réponse de l'API ou None en cas d'erreur.
-        """
-        self.logger.log_general_event(f"Tentative de création du dossier {folder_name}.")
-        result = self.graph_api.create_folder(site_id, parent_item_id, folder_name)
-        if result:
-            self.logger.log_success(f"Dossier {folder_name} créé avec succès.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
-        else:
-            self.logger.log_file_error(f"Échec de la création du dossier {folder_name}.", context=f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
-        return result
-
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path, group_name=None,
-                                        channel_name=None):
-        """
-        Transfère un dossier entier vers un canal Teams.
-        :param group_id: ID du groupe Teams.
-        :param channel_id: ID du canal Teams.
-        :param site_id: ID du site SharePoint.
-        :param depot_data_directory_path: Chemin du dossier local à transférer.
-        :param group_name: Nom du groupe Teams (optionnel).
-        :param channel_name: Nom du canal Teams (optionnel).
-        """
-        # Démarrer la mesure du temps et la journalisation
-        self.logger.log_general_event(
-            f"Début du transfert pour le groupe '{group_name}' (ID: {group_id}), "
-            f"canal '{channel_name}' (ID: {channel_id}), site ID: {site_id}."
-        )
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
+        """Orchestre le transfert des données."""
+        self.logger.start_log()
         start_time = time.time()
 
-        self.console.print(f"[green]Début du transfert pour le groupe '{group_name}'...[/green]")
+        self.console.print("[green]Starting file transfer...[/green]")
+        self.logger.logger.info(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
 
-        # Calculer le nombre total de fichiers et le volume des données
         total_initial = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
         total_volume = sum(
-            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file
-             in files])
+            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file in files])
 
-        self.logger.log_general_event(f"Total des fichiers à transférer: {total_initial}")
-        self.logger.log_general_event(f"Volume total des données: {total_volume / (1024 * 1024):.2f} MB")
+        self.logger.logger.info(f"Total files to transfer: {total_initial}")
+        self.logger.logger.info(f"Total data volume: {total_volume / (1024 * 1024):.2f} MB")
 
-        # Démarrer le transfert
-        size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(
-            group_id, channel_id, site_id, depot_data_directory_path, group_name, channel_name
-        )
+        size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(group_id, channel_id, site_id, depot_data_directory_path)
 
         # Calculer et afficher la durée
         end_time = time.time()
         duration = end_time - start_time
-        self.console.print(f"[blue]Durée totale du transfert: {duration:.2f} secondes[/blue]")
-        self.logger.log_general_event(f"Durée totale du transfert: {duration:.2f} secondes")
+        self.console.print(f"[blue]Total transfer duration: {duration:.2f} seconds[/blue]")
 
         # Terminer la journalisation
-        self.logger.log_general_event(
-            f"Transfert terminé pour le groupe '{group_name}' (ID: {group_id}), "
-            f"canal '{channel_name}' (ID: {channel_id}). "
-            f"Fichiers copiés: {total_copied}, Erreurs: {len(self.graph_api.error_logs)}"
-        )
-        self.logger.log_general_event(f"Taille du dossier source: {size_folder_source / (1024 * 1024):.2f} MB")
-        self.logger.log_general_event(f"Total des fichiers: {total_files}")
-        self.logger.log_general_event(f"Total des dossiers: {total_folders}")
+        self.logger.end_log(size_folder_source=size_folder_source, total_files=total_files, total_folders=total_folders, total_contenu_copied=total_copied, error_logs=self.graph_api.error_logs)
