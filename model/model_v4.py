@@ -5,7 +5,13 @@ from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 from rich.progress import Progress, TextColumn, BarColumn
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configuration de la journalisation
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='transfer_logs.log',
+    filemode='a'
+)
 
 class ModelGraphTransfer:
     def __init__(self, token_generator, proxy):

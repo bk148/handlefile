@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from rich.console import Console
@@ -6,7 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 from model.model_transfer import ModelGraphTransfer
 from utilis.logger_v4 import MigrationLogger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configuration de la journalisation
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='transfer_logs.log',
+    filemode='a'
+)
 
 class ControllerGraphTransfer:
     def __init__(self, token_generator, proxy):
