@@ -19,16 +19,19 @@ class ControllerGraphTransfer:
         start_time = time.time()
 
         self.console.print("[green]Starting file transfer...[/green]")
-        self.logger.logger.info(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
+        self.logger.logger.info(
+            f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
 
-        total_initial = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
-        total_volume = sum(
-            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file in files])
+        # Appeler la méthode de transfert
+        size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(
+            group_id, channel_id, site_id, depot_data_directory_path
+        )
 
-        self.logger.logger.info(f"Total files to transfer: {total_initial}")
-        self.logger.logger.info(f"Total data volume: {total_volume / (1024 * 1024):.2f} MB")
-
-        size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(group_id, channel_id, site_id, depot_data_directory_path)
+        # Vérifier si le transfert a réussi
+        if size_folder_source is None:
+            self.console.print("[red]Transfer failed. Check logs for details.[/red]")
+            self.logger.logger.error("Transfer failed due to an error in the API response.")
+            return
 
         # Calculer et afficher la durée
         end_time = time.time()
@@ -36,4 +39,10 @@ class ControllerGraphTransfer:
         self.console.print(f"[blue]Total transfer duration: {duration:.2f} seconds[/blue]")
 
         # Terminer la journalisation
-        self.logger.end_log(size_folder_source=size_folder_source, total_files=total_files, total_folders=total_folders, total_contenu_copied=total_copied, error_logs=self.graph_api.error_logs)
+        self.logger.end_log(
+            size_folder_source=size_folder_source,
+            total_files=total_files,
+            total_folders=total_folders,
+            total_contenu_copied=total_copied,
+            error_logs=self.graph_api.error_logs
+        )

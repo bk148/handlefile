@@ -153,7 +153,7 @@ class ModelGraphTransfer:
         if 'parentReference' not in files_folder_response:
             logging.error("Error: 'parentReference' does not exist in the API response.")
             self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
-            return
+            return None, None, None, None  # Retourner des valeurs par défaut en cas d'erreur
 
         drive_id = files_folder_response['parentReference']['driveId']
         parent_item_id = files_folder_response['id']
@@ -169,8 +169,13 @@ class ModelGraphTransfer:
                 headers=self.headers, proxies=self.proxies
             ).json()['value'] if item['name'] == folder_name)
 
-        # Compter le nombre total de fichiers
+        # Compter le nombre total de fichiers et dossiers
         total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
+        total_folders = sum([len(dirs) for _, dirs, _ in os.walk(depot_data_directory_path)])
+        size_folder_source = sum(
+            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file
+             in files]
+        )
 
         # Barre de progression
         with Progress(
@@ -183,6 +188,7 @@ class ModelGraphTransfer:
             task = progress.add_task("[green]Uploading files...", total=total_files)
 
             # Parcourir les fichiers et dossiers
+            total_copied = 0
             for root, dirs, files in os.walk(depot_data_directory_path):
                 relative_path = os.path.relpath(root, depot_data_directory_path)
                 current_parent_item_id = parent_item_id
@@ -205,9 +211,13 @@ class ModelGraphTransfer:
                     file_size = os.path.getsize(file_path)
                     if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
                         logging.info(f"Large file detected: {file_name}. Using upload_large_files.")
-                        self.upload_large_files(site_id, current_parent_item_id, file_path)
+                        result = self.upload_large_files(site_id, current_parent_item_id, file_path)
                     else:
-                        self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
+                        result = self.upload_file_to_channel(site_id, current_parent_item_id, file_path)
+
+                    if result and result[1] not in [None, "exists"]:
+                        total_copied += 1
                     progress.update(task, advance=1, description=f"Uploading {file_name}")
 
         logging.info("Transfer completed successfully.")
+        return size_folder_source, total_files, total_folders, total_copied
