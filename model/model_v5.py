@@ -109,35 +109,51 @@ class ModelGraphTransfer:
                 return file_name, None
 
     def upload_large_files(self, site_id, parent_item_id, file_path):
-        """Télécharge un fichier volumineux en morceaux."""
+        """Télécharge un fichier volumineux en morceaux avec une barre de progression."""
         self.refresh_token()
         file_name = os.path.basename(file_path)
         encoded_file_name = quote(file_name, safe='')
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/createUploadSession"
+
         try:
             # Créer une session d'upload
             response = requests.post(url, headers=self.headers, proxies=self.proxies)
             response.raise_for_status()
             upload_url = response.json().get('uploadUrl')
 
-            # Télécharger le fichier en morceaux
+            # Télécharger le fichier en morceaux avec une barre de progression
             chunk_size = 20 * 1024 * 1024  # 20 MB
-            with open(file_path, 'rb') as file:
-                file_size = os.path.getsize(file_path)
-                for i in range(0, file_size, chunk_size):
-                    chunk_data = file.read(chunk_size)
-                    chunk_headers = {
-                        'Content-Length': str(len(chunk_data)),
-                        'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
-                    }
-                    chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data, proxies=self.proxies)
-                    chunk_response.raise_for_status()
+            file_size = os.path.getsize(file_path)
+
+            with Progress(
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+                    TextColumn("{task.completed}/{task.total} MB"),
+                    TimeRemainingColumn()
+            ) as progress:
+                task = progress.add_task(f"[cyan]Uploading {file_name}...",
+                                         total=file_size / (1024 * 1024))  # Taille en MB
+
+                with open(file_path, 'rb') as file:
+                    for i in range(0, file_size, chunk_size):
+                        chunk_data = file.read(chunk_size)
+                        chunk_headers = {
+                            'Content-Length': str(len(chunk_data)),
+                            'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
+                        }
+                        chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data,
+                                                      proxies=self.proxies)
+                        chunk_response.raise_for_status()
+                        progress.update(task, advance=len(chunk_data) / (
+                                    1024 * 1024))  # Mettre à jour la barre de progression
 
             self.logger.log_success(file_path)
             return file_name, "uploaded"
         except requests.exceptions.RequestException as e:
             self.logger.log_failure(file_path, str(e))
-            self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+            self.error_logs["File Error"].append(
+                f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
@@ -168,16 +184,17 @@ class ModelGraphTransfer:
         total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
         total_folders = sum([len(dirs) for _, dirs, _ in os.walk(depot_data_directory_path)])
         size_folder_source = sum(
-            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file in files]
+            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file
+             in files]
         )
 
-        # Barre de progression
+        # Barre de progression globale
         with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
-            TextColumn("{task.completed}/{task.total} files"),
-            TimeRemainingColumn()
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+                TextColumn("{task.completed}/{task.total} files"),
+                TimeRemainingColumn()
         ) as progress:
             task = progress.add_task("[green]Uploading files...", total=total_files)
 
@@ -205,9 +222,13 @@ class ModelGraphTransfer:
                         file_path = os.path.join(root, file_name)
                         file_size = os.path.getsize(file_path)
                         if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
-                            futures.append(executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path))
+                            console.print(
+                                f"[yellow]Fichier volumineux détecté : {file_name} (taille : {file_size / (1024 * 1024):.2f} MB). Utilisation de upload_large_files...[/yellow]")
+                            futures.append(
+                                executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path))
                         else:
-                            futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id, file_path))
+                            futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id,
+                                                           file_path))
                         progress.update(task, advance=1, description=f"Uploading {file_name}")
 
                 # Attendre la fin de tous les téléchargements
