@@ -17,13 +17,16 @@ for team_name, team_info in data.items():
     team_id = team_info["team_id"]
     channel_id = team_info["destination_to"]["channel_id"]
     site_id = team_info["destination_to"]["site_id"]
+    channel_folder_id = team_info["destination_to"]["channel_folder_id"]  # Récupérer channel_folder_id
 
     print(f"Début de la migration pour l'équipe: {team_name}")
 
     for folder_name, folder_path in team_info["folders_to_migrate"].items():
         DEPOT_DATA_DIRECTORY_PATH = Path(folder_path)
         print(f"Transfert du dossier: {folder_name} situé à {folder_path}")
-        controller.transfer_data_folder_to_channel(team_id, channel_id, site_id, DEPOT_DATA_DIRECTORY_PATH)
+
+        # Appeler la méthode de transfert avec channel_folder_id
+        controller.transfer_data_folder_to_channel(team_id, channel_id, site_id, DEPOT_DATA_DIRECTORY_PATH, channel_folder_id)
 
     print(f"Migration terminée pour l'équipe: {team_name}")
 

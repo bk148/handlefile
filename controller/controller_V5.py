@@ -14,15 +14,15 @@ class ControllerGraphTransfer:
         """Formate la durée en heures:minutes:secondes."""
         return str(timedelta(seconds=int(duration_seconds)))
 
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
-        """Orchestre le transfert des données."""
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path, channel_folder_id):
+        """Orchestre le transfert des données en respectant la hiérarchie des dossiers."""
         start_time = time.time()
 
         self.console.print("[green]Starting file transfer...[/green]")
 
-        # Appeler la méthode de transfert
+        # Appeler la méthode de transfert avec channel_folder_id
         size_folder_source, total_files, total_folders, total_copied = self.graph_api.transfer_data_folder_to_channel(
-            group_id, channel_id, site_id, depot_data_directory_path
+            group_id, channel_id, site_id, depot_data_directory_path, channel_folder_id
         )
 
         # Vérifier si le transfert a réussi
