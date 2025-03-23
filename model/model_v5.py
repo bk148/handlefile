@@ -150,7 +150,7 @@ class ModelGraphTransfer:
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path,
                                         channel_folder_id):
-        """Transfère un dossier entier vers le canal Teams en respectant l'arborescence complète."""
+        """Transfère un dossier entier vers le canal Teams."""
         console.print(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
 
         # Compter le nombre total de fichiers
@@ -195,12 +195,11 @@ class ModelGraphTransfer:
                     for file_name in files:
                         file_path = os.path.join(root, file_name)
                         file_size = os.path.getsize(file_path)
-                        if file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go
+                        if file_name.endswith('.mp4') or file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go ou fichiers .mp4
                             console.print(
                                 f"[yellow]Fichier volumineux détecté : {file_name} (taille : {file_size / (1024 * 1024):.2f} MB). Utilisation de upload_large_files...[/yellow]")
                             futures.append(
-                                executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path,
-                                                progress, main_task))
+                                executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path))
                         else:
                             futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id,
                                                            file_path))
@@ -215,20 +214,3 @@ class ModelGraphTransfer:
 
         console.print("Transfer completed successfully.")
         return size_folder_source, total_files, total_folders, total_copied
-
-    def get_folder_id(self, site_id, parent_item_id, folder_name):
-        """Récupère l'ID d'un dossier existant dans Teams."""
-        self.refresh_token()
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
-        try:
-            response = requests.get(url, headers=self.headers, proxies=self.proxies)
-            response.raise_for_status()
-            items = response.json().get('value', [])
-            for item in items:
-                if item['name'] == folder_name and item['folder']:  # Vérifier si c'est un dossier
-                    return item['id']
-            return None  # Dossier non trouvé
-        except requests.exceptions.RequestException as e:
-            self.logger.log_failure(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}", str(e))
-            self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
-            return None
