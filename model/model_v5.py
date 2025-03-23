@@ -148,29 +148,10 @@ class ModelGraphTransfer:
                 f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
-        """Transfère un dossier entier vers le canal Teams en utilisant une seule barre de progression."""
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path,
+                                        channel_folder_id):
+        """Transfère un dossier entier vers le canal Teams en respectant la hiérarchie des dossiers."""
         console.print(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
-        files_folder_response = self.get_channel_files_folder(group_id, channel_id)
-
-        if 'parentReference' not in files_folder_response:
-            self.logger.log_failure("Dossier racine", "'parentReference' non trouvé dans la réponse de l'API")
-            self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
-            return None, None, None, None
-
-        drive_id = files_folder_response['parentReference']['driveId']
-        parent_item_id = files_folder_response['id']
-
-        # Créer le dossier parent
-        folder_name = os.path.basename(depot_data_directory_path)
-        if not self.item_exists(site_id, parent_item_id, folder_name):
-            folder_response = self.create_folder(site_id, parent_item_id, folder_name)
-            parent_item_id = folder_response['id']
-        else:
-            parent_item_id = next(item['id'] for item in requests.get(
-                f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children",
-                headers=self.headers, proxies=self.proxies
-            ).json()['value'] if item['name'] == folder_name)
 
         # Compter le nombre total de fichiers
         total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
@@ -195,15 +176,16 @@ class ModelGraphTransfer:
                 futures = []
                 for root, dirs, files in os.walk(depot_data_directory_path):
                     relative_path = os.path.relpath(root, depot_data_directory_path)
-                    current_parent_item_id = parent_item_id
+                    current_parent_item_id = channel_folder_id
 
-                    # Créer les dossiers dans le canal Teams
+                    # Créer les dossiers dans le canal Teams en respectant la hiérarchie
                     if relative_path != ".":
                         for folder in relative_path.split(os.sep):
                             if not self.item_exists(site_id, current_parent_item_id, folder):
                                 folder_response = self.create_folder(site_id, current_parent_item_id, folder)
                                 current_parent_item_id = folder_response['id']
                             else:
+                                # Récupérer l'ID du dossier existant
                                 current_parent_item_id = next(item['id'] for item in requests.get(
                                     f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
                                     headers=self.headers, proxies=self.proxies
