@@ -150,7 +150,7 @@ class ModelGraphTransfer:
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path,
                                         channel_folder_id):
-        """Transfère un dossier entier vers le canal Teams en respectant la hiérarchie des dossiers."""
+        """Transfère un dossier entier vers le canal Teams en mettant à jour un dossier enfant existant."""
         console.print(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
 
         # Compter le nombre total de fichiers
@@ -178,18 +178,18 @@ class ModelGraphTransfer:
                     relative_path = os.path.relpath(root, depot_data_directory_path)
                     current_parent_item_id = channel_folder_id
 
-                    # Créer les dossiers dans le canal Teams en respectant la hiérarchie
+                    # Si le chemin relatif n'est pas ".", cela signifie qu'on est dans un sous-dossier
                     if relative_path != ".":
+                        # Parcourir chaque dossier dans le chemin relatif
                         for folder in relative_path.split(os.sep):
-                            if not self.item_exists(site_id, current_parent_item_id, folder):
+                            # Vérifier si le dossier existe déjà dans Teams
+                            folder_id = self.get_folder_id(site_id, current_parent_item_id, folder)
+                            if folder_id:
+                                current_parent_item_id = folder_id  # Utiliser l'ID du dossier existant
+                            else:
+                                # Si le dossier n'existe pas, le créer
                                 folder_response = self.create_folder(site_id, current_parent_item_id, folder)
                                 current_parent_item_id = folder_response['id']
-                            else:
-                                # Récupérer l'ID du dossier existant
-                                current_parent_item_id = next(item['id'] for item in requests.get(
-                                    f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
-                                    headers=self.headers, proxies=self.proxies
-                                ).json()['value'] if item['name'] == folder)
 
                     # Télécharger les fichiers en parallèle
                     for file_name in files:
@@ -215,3 +215,20 @@ class ModelGraphTransfer:
 
         console.print("Transfer completed successfully.")
         return size_folder_source, total_files, total_folders, total_copied
+
+    def get_folder_id(self, site_id, parent_item_id, folder_name):
+        """Récupère l'ID d'un dossier existant dans Teams."""
+        self.refresh_token()
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children"
+        try:
+            response = requests.get(url, headers=self.headers, proxies=self.proxies)
+            response.raise_for_status()
+            items = response.json().get('value', [])
+            for item in items:
+                if item['name'] == folder_name and item['folder']:  # Vérifier si c'est un dossier
+                    return item['id']
+            return None  # Dossier non trouvé
+        except requests.exceptions.RequestException as e:
+            self.logger.log_failure(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}", str(e))
+            self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
+            return None
