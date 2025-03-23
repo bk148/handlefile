@@ -150,7 +150,7 @@ class ModelGraphTransfer:
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path,
                                         channel_folder_id):
-        """Transfère un dossier entier vers le canal Teams en mettant à jour un dossier enfant existant."""
+        """Transfère un dossier entier vers le canal Teams en respectant l'arborescence complète."""
         console.print(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
 
         # Compter le nombre total de fichiers
