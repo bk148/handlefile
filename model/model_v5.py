@@ -1,11 +1,11 @@
 import os
 import requests
-import logging
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn
 from rich.console import Console
 from tenacity import retry, stop_after_attempt, wait_exponential
+from logger import TransferLogger
 
 console = Console()
 
@@ -27,26 +27,8 @@ class ModelGraphTransfer:
             "Cyclic Redundancy Error": [],
             "Ignored Files": []
         }
-        # Configuration du système de logs
-        self.setup_logging()
-
-    def setup_logging(self):
-        """Configure le système de logs."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            filename='transfer_logs.log',
-            filemode='a'
-        )
-        self.logger = logging.getLogger('TransferLogger')
-
-    def log_success(self, item_path):
-        """Enregistre un fichier ou dossier copié avec succès."""
-        self.logger.info(f"SUCCÈS: {item_path}")
-
-    def log_failure(self, item_path, reason):
-        """Enregistre un fichier ou dossier non copié avec la raison de l'échec."""
-        self.logger.error(f"ÉCHEC: {item_path} - Raison: {reason}")
+        # Initialiser le nouveau logger
+        self.logger = TransferLogger()
 
     def refresh_token(self):
         """Rafraîchit le token et met à jour les en-têtes."""
@@ -62,7 +44,7 @@ class ModelGraphTransfer:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            self.log_failure(f"Group ID: {group_id}, Channel ID: {channel_id}", str(e))
+            self.logger.log_failure(f"Group ID: {group_id}, Channel ID: {channel_id}", str(e))
             self.error_logs["Connection Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
             return None
 
@@ -80,7 +62,7 @@ class ModelGraphTransfer:
                     return True
             return False
         except requests.exceptions.RequestException as e:
-            self.log_failure(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}", str(e))
+            self.logger.log_failure(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}", str(e))
             self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}")
             return False
 
@@ -97,10 +79,10 @@ class ModelGraphTransfer:
         try:
             response = requests.post(url, headers=self.headers, json=data, proxies=self.proxies)
             response.raise_for_status()
-            self.log_success(f"Dossier: {folder_name}")
+            self.logger.log_success(f"Dossier: {folder_name}")
             return response.json()
         except requests.exceptions.RequestException as e:
-            self.log_failure(f"Dossier: {folder_name}", str(e))
+            self.logger.log_failure(f"Dossier: {folder_name}", str(e))
             self.error_logs["Connection Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, Folder Name: {folder_name}")
             return None
 
@@ -115,14 +97,14 @@ class ModelGraphTransfer:
             with open(file_path, 'rb') as file:
                 response = requests.put(url, headers=self.headers, data=file, proxies=self.proxies)
                 response.raise_for_status()
-                self.log_success(file_path)
+                self.logger.log_success(file_path)  # Enregistrer le succès
                 return file_name, response.status_code
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:  # Token expiré
                 self.refresh_token()
                 return self.upload_file_to_channel(site_id, parent_item_id, file_path)  # Réessayer
             else:
-                self.log_failure(file_path, str(e))
+                self.logger.log_failure(file_path, str(e))  # Enregistrer l'échec
                 self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
                 return file_name, None
 
@@ -151,10 +133,10 @@ class ModelGraphTransfer:
                     chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data, proxies=self.proxies)
                     chunk_response.raise_for_status()
 
-            self.log_success(file_path)
+            self.logger.log_success(file_path)
             return file_name, "uploaded"
         except requests.exceptions.RequestException as e:
-            self.log_failure(file_path, str(e))
+            self.logger.log_failure(file_path, str(e))
             self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
@@ -164,7 +146,7 @@ class ModelGraphTransfer:
         files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
         if 'parentReference' not in files_folder_response:
-            self.log_failure("Dossier racine", "'parentReference' non trouvé dans la réponse de l'API")
+            self.logger.log_failure("Dossier racine", "'parentReference' non trouvé dans la réponse de l'API")
             self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
             return None, None, None, None
 
