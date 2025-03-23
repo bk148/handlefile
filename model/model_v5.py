@@ -109,7 +109,7 @@ class ModelGraphTransfer:
                 return file_name, None
 
     def upload_large_files(self, site_id, parent_item_id, file_path, progress, main_task):
-        """Télécharge un fichier volumineux en morceaux avec une barre de progression."""
+        """Télécharge un fichier volumineux en morceaux en utilisant la barre de progression principale."""
         self.refresh_token()
         file_name = os.path.basename(file_path)
         encoded_file_name = quote(file_name, safe='')
@@ -121,12 +121,9 @@ class ModelGraphTransfer:
             response.raise_for_status()
             upload_url = response.json().get('uploadUrl')
 
-            # Télécharger le fichier en morceaux avec une barre de progression
+            # Télécharger le fichier en morceaux
             chunk_size = 20 * 1024 * 1024  # 20 MB
             file_size = os.path.getsize(file_path)
-
-            # Ajouter une sous-tâche pour le fichier volumineux
-            file_task = progress.add_task(f"[cyan]Uploading {file_name}...", total=file_size)
 
             with open(file_path, 'rb') as file:
                 for i in range(0, file_size, chunk_size):
@@ -138,9 +135,11 @@ class ModelGraphTransfer:
                     chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data,
                                                   proxies=self.proxies)
                     chunk_response.raise_for_status()
-                    progress.update(file_task, advance=len(chunk_data))  # Mettre à jour la barre de progression
 
-            progress.remove_task(file_task)  # Supprimer la sous-tâche une fois terminée
+                    # Mettre à jour la barre de progression principale
+                    progress.update(main_task, advance=len(chunk_data) / file_size,
+                                    description=f"Uploading {file_name}")
+
             self.logger.log_success(file_path)
             return file_name, "uploaded"
         except requests.exceptions.RequestException as e:
@@ -150,7 +149,7 @@ class ModelGraphTransfer:
             return file_name, None
 
     def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
-        """Transfère un dossier entier vers le canal Teams."""
+        """Transfère un dossier entier vers le canal Teams en utilisant une seule barre de progression."""
         console.print(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
         files_folder_response = self.get_channel_files_folder(group_id, channel_id)
 
