@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn
 from rich.console import Console
 from tenacity import retry, stop_after_attempt, wait_exponential
-from logger import TransferLogger
 
 console = Console()
 
@@ -27,7 +26,6 @@ class ModelGraphTransfer:
             "Cyclic Redundancy Error": [],
             "Ignored Files": []
         }
-        # Initialiser le nouveau logger
         self.logger = TransferLogger()
 
     def refresh_token(self):
@@ -95,7 +93,7 @@ class ModelGraphTransfer:
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/content"
         try:
             with open(file_path, 'rb') as file:
-                response = requests.put(url, headers=self.headers, data=file, proxies=self.proxies)
+                response = requests.put(url, headers=self.headers, data=file, proxies=self.proxies, timeout=(30, 30))  # Délai d'attente de 30 secondes
                 response.raise_for_status()
                 self.logger.log_success(file_path)  # Enregistrer le succès
                 return file_name, response.status_code
@@ -108,16 +106,15 @@ class ModelGraphTransfer:
                 self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
                 return file_name, None
 
-    def upload_large_files(self, site_id, parent_item_id, file_path, progress, main_task):
-        """Télécharge un fichier volumineux en morceaux en utilisant la barre de progression principale."""
+    def upload_large_files(self, site_id, parent_item_id, file_path):
+        """Télécharge un fichier volumineux en morceaux."""
         self.refresh_token()
         file_name = os.path.basename(file_path)
         encoded_file_name = quote(file_name, safe='')
         url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}:/{encoded_file_name}:/createUploadSession"
-
         try:
             # Créer une session d'upload
-            response = requests.post(url, headers=self.headers, proxies=self.proxies)
+            response = requests.post(url, headers=self.headers, proxies=self.proxies, timeout=(30, 30))  # Délai d'attente de 30 secondes
             response.raise_for_status()
             upload_url = response.json().get('uploadUrl')
 
@@ -132,78 +129,86 @@ class ModelGraphTransfer:
                         'Content-Length': str(len(chunk_data)),
                         'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
                     }
-                    chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data,
-                                                  proxies=self.proxies)
+                    chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data, proxies=self.proxies, timeout=(30, 30))  # Délai d'attente de 30 secondes
                     chunk_response.raise_for_status()
-
-                    # Mettre à jour la barre de progression principale
-                    progress.update(main_task, advance=len(chunk_data) / file_size,
-                                    description=f"Uploading {file_name}")
 
             self.logger.log_success(file_path)
             return file_name, "uploaded"
         except requests.exceptions.RequestException as e:
             self.logger.log_failure(file_path, str(e))
-            self.error_logs["File Error"].append(
-                f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
+            self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
             return file_name, None
 
-    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path,
-                                        channel_folder_id):
+    def transfer_data_folder_to_channel(self, group_id, channel_id, site_id, depot_data_directory_path):
         """Transfère un dossier entier vers le canal Teams."""
         console.print(f"Starting transfer for group_id: {group_id}, channel_id: {channel_id}, site_id: {site_id}")
+        files_folder_response = self.get_channel_files_folder(group_id, channel_id)
+
+        if 'parentReference' not in files_folder_response:
+            self.logger.log_failure("Dossier racine", "'parentReference' non trouvé dans la réponse de l'API")
+            self.error_logs["Data Format Error"].append(f"Group ID: {group_id}, Channel ID: {channel_id}")
+            return None, None, None, None
+
+        drive_id = files_folder_response['parentReference']['driveId']
+        parent_item_id = files_folder_response['id']
+
+        # Créer le dossier parent
+        folder_name = os.path.basename(depot_data_directory_path)
+        if not self.item_exists(site_id, parent_item_id, folder_name):
+            folder_response = self.create_folder(site_id, parent_item_id, folder_name)
+            parent_item_id = folder_response['id']
+        else:
+            parent_item_id = next(item['id'] for item in requests.get(
+                f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{parent_item_id}/children",
+                headers=self.headers, proxies=self.proxies
+            ).json()['value'] if item['name'] == folder_name)
 
         # Compter le nombre total de fichiers
         total_files = sum([len(files) for _, _, files in os.walk(depot_data_directory_path)])
         total_folders = sum([len(dirs) for _, dirs, _ in os.walk(depot_data_directory_path)])
         size_folder_source = sum(
-            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file
-             in files]
+            [os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(depot_data_directory_path) for file in files]
         )
 
-        # Barre de progression globale
+        # Barre de progression
         with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
-                TextColumn("{task.completed}/{task.total} files"),
-                TimeRemainingColumn()
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+            TextColumn("{task.completed}/{task.total} files"),
+            TimeRemainingColumn()
         ) as progress:
-            main_task = progress.add_task("[green]Uploading files...", total=total_files)
+            task = progress.add_task("[green]Uploading files...", total=total_files)
 
             # Utiliser ThreadPoolExecutor pour le téléchargement parallèle
             with ThreadPoolExecutor(max_workers=10) as executor:  # 10 threads en parallèle
                 futures = []
                 for root, dirs, files in os.walk(depot_data_directory_path):
                     relative_path = os.path.relpath(root, depot_data_directory_path)
-                    current_parent_item_id = channel_folder_id
+                    current_parent_item_id = parent_item_id
 
-                    # Si le chemin relatif n'est pas ".", cela signifie qu'on est dans un sous-dossier
+                    # Créer les dossiers dans le canal Teams
                     if relative_path != ".":
-                        # Parcourir chaque dossier dans le chemin relatif
                         for folder in relative_path.split(os.sep):
-                            # Vérifier si le dossier existe déjà dans Teams
-                            folder_id = self.get_folder_id(site_id, current_parent_item_id, folder)
-                            if folder_id:
-                                current_parent_item_id = folder_id  # Utiliser l'ID du dossier existant
-                            else:
-                                # Si le dossier n'existe pas, le créer
+                            if not self.item_exists(site_id, current_parent_item_id, folder):
                                 folder_response = self.create_folder(site_id, current_parent_item_id, folder)
                                 current_parent_item_id = folder_response['id']
+                            else:
+                                current_parent_item_id = next(item['id'] for item in requests.get(
+                                    f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/items/{current_parent_item_id}/children",
+                                    headers=self.headers, proxies=self.proxies
+                                ).json()['value'] if item['name'] == folder)
 
                     # Télécharger les fichiers en parallèle
                     for file_name in files:
                         file_path = os.path.join(root, file_name)
                         file_size = os.path.getsize(file_path)
                         if file_name.endswith('.mp4') or file_size >= 1 * 1024 * 1024 * 1024:  # 1 Go ou fichiers .mp4
-                            console.print(
-                                f"[yellow]Fichier volumineux détecté : {file_name} (taille : {file_size / (1024 * 1024):.2f} MB). Utilisation de upload_large_files...[/yellow]")
-                            futures.append(
-                                executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path))
+                            console.print(f"[yellow]Fichier volumineux détecté : {file_name} (taille : {file_size / (1024 * 1024):.2f} MB). Utilisation de upload_large_files...[/yellow]")
+                            futures.append(executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path))
                         else:
-                            futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id,
-                                                           file_path))
-                        progress.update(main_task, advance=1, description=f"Uploading {file_name}")
+                            futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id, file_path))
+                        progress.update(task, advance=1, description=f"Uploading {file_name}")
 
                 # Attendre la fin de tous les téléchargements
                 total_copied = 0
