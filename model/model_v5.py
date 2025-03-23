@@ -108,7 +108,7 @@ class ModelGraphTransfer:
                 self.error_logs["File Error"].append(f"Site ID: {site_id}, Parent Item ID: {parent_item_id}, File Path: {file_path}")
                 return file_name, None
 
-    def upload_large_files(self, site_id, parent_item_id, file_path):
+    def upload_large_files(self, site_id, parent_item_id, file_path, progress, main_task):
         """Télécharge un fichier volumineux en morceaux avec une barre de progression."""
         self.refresh_token()
         file_name = os.path.basename(file_path)
@@ -125,29 +125,22 @@ class ModelGraphTransfer:
             chunk_size = 20 * 1024 * 1024  # 20 MB
             file_size = os.path.getsize(file_path)
 
-            with Progress(
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
-                    TextColumn("{task.completed}/{task.total} MB"),
-                    TimeRemainingColumn()
-            ) as progress:
-                task = progress.add_task(f"[cyan]Uploading {file_name}...",
-                                         total=file_size / (1024 * 1024))  # Taille en MB
+            # Ajouter une sous-tâche pour le fichier volumineux
+            file_task = progress.add_task(f"[cyan]Uploading {file_name}...", total=file_size)
 
-                with open(file_path, 'rb') as file:
-                    for i in range(0, file_size, chunk_size):
-                        chunk_data = file.read(chunk_size)
-                        chunk_headers = {
-                            'Content-Length': str(len(chunk_data)),
-                            'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
-                        }
-                        chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data,
-                                                      proxies=self.proxies)
-                        chunk_response.raise_for_status()
-                        progress.update(task, advance=len(chunk_data) / (
-                                    1024 * 1024))  # Mettre à jour la barre de progression
+            with open(file_path, 'rb') as file:
+                for i in range(0, file_size, chunk_size):
+                    chunk_data = file.read(chunk_size)
+                    chunk_headers = {
+                        'Content-Length': str(len(chunk_data)),
+                        'Content-Range': f'bytes {i}-{i + len(chunk_data) - 1}/{file_size}'
+                    }
+                    chunk_response = requests.put(upload_url, headers=chunk_headers, data=chunk_data,
+                                                  proxies=self.proxies)
+                    chunk_response.raise_for_status()
+                    progress.update(file_task, advance=len(chunk_data))  # Mettre à jour la barre de progression
 
+            progress.remove_task(file_task)  # Supprimer la sous-tâche une fois terminée
             self.logger.log_success(file_path)
             return file_name, "uploaded"
         except requests.exceptions.RequestException as e:
@@ -196,7 +189,7 @@ class ModelGraphTransfer:
                 TextColumn("{task.completed}/{task.total} files"),
                 TimeRemainingColumn()
         ) as progress:
-            task = progress.add_task("[green]Uploading files...", total=total_files)
+            main_task = progress.add_task("[green]Uploading files...", total=total_files)
 
             # Utiliser ThreadPoolExecutor pour le téléchargement parallèle
             with ThreadPoolExecutor(max_workers=10) as executor:  # 10 threads en parallèle
@@ -225,11 +218,12 @@ class ModelGraphTransfer:
                             console.print(
                                 f"[yellow]Fichier volumineux détecté : {file_name} (taille : {file_size / (1024 * 1024):.2f} MB). Utilisation de upload_large_files...[/yellow]")
                             futures.append(
-                                executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path))
+                                executor.submit(self.upload_large_files, site_id, current_parent_item_id, file_path,
+                                                progress, main_task))
                         else:
                             futures.append(executor.submit(self.upload_file_to_channel, site_id, current_parent_item_id,
                                                            file_path))
-                        progress.update(task, advance=1, description=f"Uploading {file_name}")
+                        progress.update(main_task, advance=1, description=f"Uploading {file_name}")
 
                 # Attendre la fin de tous les téléchargements
                 total_copied = 0
